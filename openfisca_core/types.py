@@ -484,6 +484,8 @@ class SimpleTracer(Protocol):
 
     def record_calculation_end(self, /) -> None: ...
 
+    def record_formula_type(self, formula_type: str, /) -> None: ...
+
 
 class TraceNode(Protocol):
     @property
@@ -491,6 +493,9 @@ class TraceNode(Protocol):
 
     @property
     def end(self, /) -> Time: ...
+
+    @property
+    def formula_type(self, /) -> str | None: ...
 
     @property
     def name(self, /) -> str: ...

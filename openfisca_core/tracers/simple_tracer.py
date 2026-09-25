@@ -40,6 +40,9 @@ class SimpleTracer:
     def record_calculation_result(self, value: t.ArrayLike[object]) -> None:
         """Ignore calculation result."""
 
+    def record_formula_type(self, formula_type: str) -> None:
+        """Ignore formula type."""
+
     def record_parameter_access(
         self, parameter: str, period: t.Period, value: t.ArrayLike[object]
     ) -> None:
