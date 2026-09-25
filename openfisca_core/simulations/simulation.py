@@ -369,6 +369,7 @@ class Simulation:
                     "Call set_input first or define initial_formula."
                 )
                 raise ValueError(msg)
+            self._check_for_stateful_cycle(variable.name, period)
             result = self._run_stateful_formula(
                 initial_formula,
                 population,
@@ -376,36 +377,38 @@ class Simulation:
             )
             self.tracer.record_formula_type("initial")
             result = self._cast_formula_result(result, variable)
-            holder._set(period, result)
+            holder._set(period, result, as_of_source="calculated")
             holder._as_of_transition_computed.add(instant)
             return holder.get_array(period)
 
         transition_formula = variable.get_transition_formula(period)
         if transition_formula is not None:
-            try:
-                self._check_for_strict_cycle(variable.name, period)
-                transition = self._run_stateful_formula(
-                    transition_formula,
-                    population,
+            self._check_for_stateful_cycle(variable.name, period)
+            transition = self._run_stateful_formula(
+                transition_formula,
+                population,
+                period,
+            )
+            self.tracer.record_formula_type("transition")
+            if transition is not None:
+                selector, values = transition
+                selector = numpy.asarray(selector)
+                if selector.size == 0:
+                    selector = selector.astype(numpy.intp)
+                elif selector.dtype == numpy.bool_:
+                    if selector.ndim != 1 or len(selector) != population.count:
+                        msg = (
+                            f'transition_formula of "{variable.name}" returned '
+                            "a boolean selector with an invalid shape."
+                        )
+                        raise ValueError(msg)
+                    selector = numpy.flatnonzero(selector)
+                holder.set_input_sparse(
                     period,
+                    selector,
+                    values,
+                    as_of_source="calculated",
                 )
-                self.tracer.record_formula_type("transition")
-                if transition is not None:
-                    selector, values = transition
-                    selector = numpy.asarray(selector)
-                    if selector.size == 0:
-                        selector = selector.astype(numpy.intp)
-                    elif selector.dtype == numpy.bool_:
-                        if selector.ndim != 1 or len(selector) != population.count:
-                            msg = (
-                                f'transition_formula of "{variable.name}" returned '
-                                "a boolean selector with an invalid shape."
-                            )
-                            raise ValueError(msg)
-                        selector = numpy.flatnonzero(selector)
-                    holder.set_input_sparse(period, selector, values)
-            except errors.CycleError:
-                pass
 
         holder._as_of_transition_computed.add(instant)
         result = holder.get_array(period)
@@ -518,12 +521,17 @@ class Simulation:
             message = f"Quasicircular definition detected on formula {variable}@{period} involving {self.tracer.stack}"
             raise errors.SpiralError(message, variable)
 
-    def _check_for_strict_cycle(self, variable: str, period) -> None:
+    def _check_for_stateful_cycle(self, variable: str, period) -> None:
         for frame in self.tracer.stack[:-1]:
-            if frame["name"] == variable and frame["period"] == period:
+            if frame["name"] != variable:
+                continue
+            if frame["period"] == period:
+                msg = f"Circular definition detected on stateful formula {variable}@{period}"
+                raise errors.CycleError(msg)
+            if period > frame["period"]:
                 msg = (
-                    "Circular definition detected on transition_formula "
-                    f"{variable}@{period}"
+                    "Future recursion detected on stateful formula "
+                    f"{variable}@{period} from {frame['period']}"
                 )
                 raise errors.CycleError(msg)
 

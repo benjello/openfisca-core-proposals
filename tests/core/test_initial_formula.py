@@ -22,6 +22,23 @@ def test_initial_formula_requires_as_of():
         InvalidVariable()
 
 
+def test_initial_formula_is_mutually_exclusive_with_formula():
+    class InvalidVariable(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+        def formula(person, period):  # noqa: N805
+            return 0
+
+        def initial_formula(person, period):  # noqa: N805
+            return 1
+
+    with pytest.raises(ValueError, match="formula and initial_formula"):
+        InvalidVariable()
+
+
 def test_initial_formula_dispatches_in_date_order():
     class StatefulVariable(Variable):
         value_type = int
