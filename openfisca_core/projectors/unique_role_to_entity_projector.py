@@ -10,5 +10,5 @@ class UniqueRoleToEntityProjector(Projector):
         self.parent = parent
         self.role = role
 
-    def transform(self, result):
-        return self.target_entity.value_from_person(result, self.role)
+    def transform(self, result, period=None):
+        return self.target_entity.value_from_person(result, self.role, period=period)
