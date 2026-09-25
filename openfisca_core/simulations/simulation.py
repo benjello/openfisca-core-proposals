@@ -375,7 +375,7 @@ class Simulation:
                 population,
                 period,
             )
-            self.tracer.record_formula_type("initial")
+            self._record_formula_type("initial")
             result = self._cast_formula_result(result, variable)
             holder._set(period, result, as_of_source="calculated")
             holder._as_of_transition_computed.add(instant)
@@ -389,7 +389,7 @@ class Simulation:
                 population,
                 period,
             )
-            self.tracer.record_formula_type("transition")
+            self._record_formula_type("transition")
             if transition is not None:
                 selector, values = transition
                 selector = numpy.asarray(selector)
@@ -423,6 +423,11 @@ class Simulation:
         if formula.__code__.co_argcount == 2:
             return formula(population, period)
         return formula(population, period, parameters_at)
+
+    def _record_formula_type(self, formula_type) -> None:
+        record_formula_type = getattr(self.tracer, "record_formula_type", None)
+        if record_formula_type is not None:
+            record_formula_type(formula_type)
 
     def _run_formula(self, variable, population, period):
         """Find the ``variable`` formula for the given ``period`` if it exists, and apply it to ``population``."""

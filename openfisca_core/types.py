@@ -221,6 +221,7 @@ class MemoryUsage(TypedDict, total=False):
     nb_cells_by_array: int
     nb_requests: int
     nb_requests_by_array: int
+    storage_overhead_bytes: int
     total_nb_bytes: Required[int]
 
 
@@ -434,6 +435,7 @@ class FlatTraceMap(TypedDict, total=True):
     value: None | VarArray
     calculation_time: Time
     formula_time: Time
+    formula_type: str | None
 
 
 class SerializedTraceMap(TypedDict, total=True):
@@ -442,6 +444,7 @@ class SerializedTraceMap(TypedDict, total=True):
     value: None | ArrayLike[object]
     calculation_time: Time
     formula_time: Time
+    formula_type: str | None
 
 
 class SimpleTraceMap(TypedDict, total=True):
