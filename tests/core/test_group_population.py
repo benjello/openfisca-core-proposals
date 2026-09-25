@@ -12,8 +12,8 @@ def test_set_members_entity_id_updates_structure_and_invalidates_cached_values(
         count=4,
     ).household
     old_roles = population.members_role
-    population.members_position
-    population.ordered_members_map
+    assert population.members_position is not None
+    assert population.ordered_members_map is not None
 
     population.set_members_entity_id([0, 2, 0, 2])
 

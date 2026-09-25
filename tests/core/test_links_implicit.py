@@ -1,6 +1,7 @@
+from types import SimpleNamespace
+
 import numpy
 import pytest
-from types import SimpleNamespace
 
 from openfisca_core import entities, periods, taxbenefitsystems, variables
 from openfisca_core.links.implicit import ImplicitMany2OneLink, ImplicitOne2ManyLink
@@ -77,6 +78,55 @@ def test_implicit_link_keeps_projector_shortcuts_working(simulation):
         simulation.persons.household.first_person("salary", "2024"),
         [10, 10, 5],
     )
+    numpy.testing.assert_array_equal(
+        simulation.persons.get_rank(simulation.persons.household, salaries),
+        [0, 1, 0],
+    )
+
+
+def test_implicit_links_follow_period_membership(simulation):
+    simulation.household.set_members_for_period("2025", [0, 1, 1])
+    simulation.set_input("salary", "2025", [10, 20, 5])
+    simulation.set_input("rent", "2025", [100, 80])
+
+    numpy.testing.assert_array_equal(
+        simulation.persons.household("rent", "2024"),
+        [100, 100, 80],
+    )
+    numpy.testing.assert_array_equal(
+        simulation.persons.household("rent", "2025"),
+        [100, 80, 80],
+    )
+    numpy.testing.assert_array_equal(
+        simulation.household.persons.sum("salary", "2024"),
+        [30, 5],
+    )
+    numpy.testing.assert_array_equal(
+        simulation.household.persons.sum("salary", "2025"),
+        [10, 25],
+    )
+
+    salaries_2024 = simulation.persons("salary", "2024")
+    salaries_2025 = simulation.persons("salary", "2025")
+    numpy.testing.assert_array_equal(
+        simulation.persons.household.sum(salaries_2024, period="2024"),
+        [30, 30, 5],
+    )
+    numpy.testing.assert_array_equal(
+        simulation.persons.household.sum(salaries_2025, period="2025"),
+        [10, 25, 25],
+    )
+
+
+def test_implicit_links_without_period_keep_static_membership(simulation):
+    simulation.household.set_members_for_period("2025", [0, 1, 1])
+    salaries = simulation.persons("salary", "2024")
+
+    numpy.testing.assert_array_equal(
+        simulation.persons.household.sum(salaries),
+        [30, 30, 5],
+    )
+    numpy.testing.assert_array_equal(simulation.household.persons.count(), [2, 1])
 
 
 def test_implicit_links_use_the_tax_benefit_system_person_key():

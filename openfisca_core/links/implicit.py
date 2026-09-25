@@ -11,14 +11,18 @@ from .many2one import Many2OneLink
 from .one2many import One2ManyLink
 
 
-class ImplicitMany2OneLink(Many2OneLink):
+class ImplicitMany2OneLink(Many2OneLink, projectors.Projector):
     """A person-to-group link backed by ``members_entity_id``."""
 
     def __init__(self, group_entity_key: str) -> None:
         super().__init__(group_entity_key, "", group_entity_key)
 
     def _get_target_ids(self, period) -> numpy.ndarray:
-        return self._target_population.members_entity_id
+        return self._target_population._get_members_entity_id(period)
+
+    @property
+    def reference_entity(self):
+        return self._target_population
 
     @property
     def role(self) -> numpy.ndarray:
@@ -36,8 +40,10 @@ class ImplicitMany2OneLink(Many2OneLink):
         ):
 
             def projected(*args, **kwargs):
+                period = kwargs.get("period")
                 return self._target_population.project(
-                    target_attribute(*args, **kwargs)
+                    target_attribute(*args, **kwargs),
+                    period=period,
                 )
 
             return projected
@@ -57,7 +63,7 @@ class ImplicitOne2ManyLink(One2ManyLink):
         self.group_entity_key = group_entity_key
 
     def _source_rows(self, period) -> numpy.ndarray:
-        return self._source_population.members_entity_id
+        return self._source_population._get_members_entity_id(period)
 
     def _filter(self, source_rows, role, condition) -> numpy.ndarray:
         valid = source_rows >= 0
