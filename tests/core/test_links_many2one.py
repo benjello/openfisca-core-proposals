@@ -139,3 +139,34 @@ def test_many2one_rejects_invalid_options(simulation):
         link("age", "2024", options=[ADD, DIVIDE])
     with pytest.raises(InvalidOptionError):
         link("age", "2024", options=["INVALID"])
+
+
+def test_many2one_chaining_resolves_every_hop(simulation):
+    result = simulation.persons.mother.mother("age", "2024")
+
+    numpy.testing.assert_array_equal(result, [0, 0, 45])
+
+
+def test_many2one_chaining_preserves_enum_and_defaults(simulation):
+    result = simulation.persons.mother.mother("housing_status", "2024")
+
+    assert isinstance(result, indexed_enums.EnumArray)
+    numpy.testing.assert_array_equal(
+        result.decode_to_str(),
+        ["tenant", "tenant", "owner"],
+    )
+
+
+def test_many2one_chaining_uses_each_links_resolver(simulation, monkeypatch):
+    link = simulation.persons.mother
+    calls = []
+    original = link._resolve_ids
+
+    def tracked(ids, population):
+        calls.append(ids.copy())
+        return original(ids, population)
+
+    monkeypatch.setattr(link, "_resolve_ids", tracked)
+
+    numpy.testing.assert_array_equal(link.mother("age", "2024"), [0, 0, 45])
+    assert len(calls) == 2
