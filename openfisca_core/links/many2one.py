@@ -25,7 +25,6 @@ class Many2OneLink(Link):
             message = f"Link '{self.name}' is not bound to a simulation"
             raise LinkResolutionError(message)
 
-        simulation = self._source_population.simulation
         try:
             target_ids = self._get_target_ids(period)
         except (errors.CycleError, errors.SpiralError):
@@ -63,12 +62,15 @@ class Many2OneLink(Link):
             )
             raise LinkResolutionError(message) from error
 
-        target_rows = self._resolve_ids(target_ids, self._target_population)
-        variable = simulation.tax_benefit_system.get_variable(variable_name)
-        default = variable.default_value if variable is not None else 0
-        if isinstance(default, indexed_enums.Enum):
-            default = default.index
+        return self._project_values(
+            target_values,
+            target_ids,
+            self._default_value(variable_name),
+        )
 
+    def _project_values(self, target_values, target_ids, default) -> numpy.ndarray:
+        """Project target values through this link's ID resolution."""
+        target_rows = self._resolve_ids(target_ids, self._target_population)
         result = numpy.full(
             self._source_population.count,
             default,
@@ -80,12 +82,32 @@ class Many2OneLink(Link):
             return indexed_enums.EnumArray(result, target_values.possible_values)
         return result
 
+    def _default_value(self, variable_name: str):
+        variable = self._source_population.simulation.tax_benefit_system.get_variable(
+            variable_name
+        )
+        default = variable.default_value if variable is not None else 0
+        if isinstance(default, indexed_enums.Enum):
+            return default.index
+        return default
+
     def _get_target_ids(self, period) -> numpy.ndarray:
         """Read target IDs from the source population's link field."""
         return self._source_population(self.link_field, period)
 
     def __call__(self, variable_name: str, period, *, options=None) -> numpy.ndarray:
         return self.get(variable_name, period, options=options)
+
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        if self._target_population is None:
+            raise AttributeError(f"Link '{self.name}' is not bound to a simulation")
+        target_link = self._target_population.links.get(name)
+        if isinstance(target_link, Many2OneLink):
+            return _ChainedLink((self, target_link))
+        target_key = self._target_population.entity.key
+        raise AttributeError(f"Entity '{target_key}' has no many-to-one link '{name}'")
 
     @property
     def role(self) -> numpy.ndarray | None:
@@ -140,6 +162,35 @@ class Many2OneLink(Link):
             raise ValueError(message)
         criteria = self._source_population(variable_name, period)
         return self._source_population.get_rank(target, criteria, condition=condition)
+
+
+class _ChainedLink:
+    """A sequence of many-to-one links resolved from left to right."""
+
+    def __init__(self, links: tuple[Many2OneLink, ...]) -> None:
+        self._links = links
+
+    def get(self, variable_name: str, period, options=None) -> numpy.ndarray:
+        """Resolve the final variable and project it through every prior link."""
+        result = self._links[-1].get(variable_name, period, options=options)
+        default = self._links[-1]._default_value(variable_name)
+        for link in reversed(self._links[:-1]):
+            target_ids = link._get_target_ids(period)
+            result = link._project_values(result, target_ids, default)
+        return result
+
+    def __call__(self, variable_name: str, period, *, options=None) -> numpy.ndarray:
+        return self.get(variable_name, period, options=options)
+
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        target_population = self._links[-1]._target_population
+        target_link = target_population.links.get(name)
+        if isinstance(target_link, Many2OneLink):
+            return _ChainedLink((*self._links, target_link))
+        target_key = target_population.entity.key
+        raise AttributeError(f"Entity '{target_key}' has no many-to-one link '{name}'")
 
 
 __all__ = ["Many2OneLink"]
