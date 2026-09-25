@@ -24,7 +24,15 @@ def build_simulation():
         entity = household
         definition_period = periods.DateUnit.MONTH
 
-    tax_benefit_system.add_variable(group_value)
+    class is_parent(variables.Variable):
+        value_type = bool
+        entity = person
+        definition_period = periods.DateUnit.MONTH
+
+        def formula(population, _period):
+            return population.has_role(household.flattened_roles[0])
+
+    tax_benefit_system.add_variables(group_value, is_parent)
     simulation = SimulationBuilder.build_default_simulation(
         tax_benefit_system,
         count=4,
@@ -95,6 +103,24 @@ def test_role_change_invalidates_cached_group_values() -> None:
     )
 
     assert holder.get_array("2024-02") is None
+
+
+def test_role_change_invalidates_person_formula_cache() -> None:
+    simulation, parent, child = build_simulation()
+    numpy.testing.assert_array_equal(
+        simulation.calculate("is_parent", "2024-02"),
+        [True, False, True, False],
+    )
+
+    simulation.household.set_roles_for_period(
+        "2024-02",
+        [child, parent, child, parent],
+    )
+
+    numpy.testing.assert_array_equal(
+        simulation.calculate("is_parent", "2024-02"),
+        [False, True, False, True],
+    )
 
 
 @pytest.mark.parametrize(

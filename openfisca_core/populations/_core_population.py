@@ -572,7 +572,7 @@ class CorePopulation:
         return result
 
     def _set_period_identity_snapshot(self, period, permanent_ids) -> None:
-        snapshot_period = periods.period(period)
+        snapshot_period = self._validate_snapshot_period(period, self._period_index)
         id_to_rownum = self._build_id_to_rownum(permanent_ids)
         self._period_index[snapshot_period] = {
             "count": len(permanent_ids),
@@ -613,6 +613,25 @@ class CorePopulation:
         )
         latest = max(candidates, key=lambda item: item[0].start, default=None)
         return None if latest is None else latest[1]
+
+    @staticmethod
+    def _validate_snapshot_period(period, snapshots):
+        snapshot_period = periods.period(period)
+        collision = next(
+            (
+                known_period
+                for known_period in snapshots
+                if known_period.start == snapshot_period.start
+                and known_period != snapshot_period
+            ),
+            None,
+        )
+        if collision is not None:
+            raise ValueError(
+                f"Snapshot period {snapshot_period} has the same start as "
+                f"existing snapshot period {collision}; use one canonical period",
+            )
+        return snapshot_period
 
     def get_period_id_to_rownum(self, period):
         """Return the latest identity mapping applicable to ``period``."""
@@ -661,7 +680,8 @@ class CorePopulation:
                 if known_period.start < snapshot_period.start:
                     continue
                 if next_start is None or known_period.start < next_start:
-                    holder.delete_arrays(known_period)
+                    if known_period not in holder._input_periods:
+                        holder.delete_arrays(known_period)
 
     def _invalidate_lifecycle_caches(self, snapshot_period) -> None:
         populations = (
