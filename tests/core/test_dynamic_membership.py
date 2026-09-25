@@ -1,7 +1,7 @@
 import numpy
 import pytest
 
-from openfisca_core import entities, periods, taxbenefitsystems, variables
+from openfisca_core import entities, periods, projectors, taxbenefitsystems, variables
 from openfisca_core.simulations import SimulationBuilder
 
 
@@ -150,6 +150,25 @@ def test_top_level_projector_uses_explicit_membership_period() -> None:
     numpy.testing.assert_array_equal(
         simulation.persons.household("household_income", "2024-02"),
         [100, 200, 100, 200],
+    )
+
+
+def test_temporal_projector_supports_historical_custom_parent() -> None:
+    class HistoricalProjector(projectors.Projector):
+        def transform(self, result):
+            return result + 1
+
+    simulation = build_simulation()
+    simulation.household.set_members_for_period("2024-02", [0, 1, 0, 1])
+    simulation.set_input("household_income", "2024-02", [100, 200])
+    projector = projectors.EntityToPersonProjector(
+        simulation.household,
+        parent=HistoricalProjector(),
+    )
+
+    numpy.testing.assert_array_equal(
+        projector("household_income", "2024-02"),
+        [101, 201, 101, 201],
     )
 
 

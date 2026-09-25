@@ -155,6 +155,27 @@ def test_dump_restore_preserves_static_empty_group_count(tmp_path) -> None:
     numpy.testing.assert_array_equal(restored.household.nb_persons(), [2, 1, 0])
 
 
+def test_restore_legacy_dump_with_empty_membership(tmp_path) -> None:
+    simulation, tax_benefit_system = build_simulation(dynamic=False)
+    simulation.persons.ids = numpy.array([])
+    simulation.persons.count = 0
+    simulation.household.ids = numpy.array([])
+    simulation.household.count = 0
+    simulation.household.members_entity_id = numpy.array([], dtype=numpy.intp)
+    directory = tmp_path / "simulation"
+
+    simulation_dumper.dump_simulation(simulation, str(directory))
+    (directory / "__entities__" / "household" / "count.npy").unlink()
+    restored = simulation_dumper.restore_simulation(
+        str(directory),
+        tax_benefit_system,
+    )
+
+    assert restored.persons.count == 0
+    assert restored.household.count == 0
+    assert restored.household.members_entity_id.size == 0
+
+
 def test_dump_restore_preserves_inputs_during_structure_invalidation(tmp_path) -> None:
     simulation, tax_benefit_system = build_simulation()
     simulation.household.set_members_for_period("2024-02", [0, 2, 2])
