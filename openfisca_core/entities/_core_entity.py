@@ -46,6 +46,19 @@ class CoreEntity:
     #: A ``TaxBenefitSystem`` instance.
     _tax_benefit_system: None | t.TaxBenefitSystem = None
 
+    def add_link(self, link: object) -> None:
+        """Register a named link on this entity."""
+        self.links[link.name] = link
+
+    def get_link(self, name: str) -> object | None:
+        """Return a registered link by name."""
+        return self.links.get(name)
+
+    @property
+    def links(self) -> dict[str, object]:
+        """Links declared for this entity."""
+        return self.__dict__.setdefault("_links", {})
+
     @abc.abstractmethod
     def __init__(self, *__args: object, **__kwargs: object) -> None: ...
 
