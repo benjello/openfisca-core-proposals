@@ -37,10 +37,13 @@ class Projector:
         return self.transform_and_bubble_up(result, period)
 
     def transform_and_bubble_up(self, result, period=None):
-        transformed_result = self.transform(result, period)
+        transformed_result = self._transform(result, period)
         if self.parent is None:
             return transformed_result
         return self.parent.transform_and_bubble_up(transformed_result, period)
 
-    def transform(self, result, period=None):
+    def _transform(self, result, period=None):
+        return self.transform(result)
+
+    def transform(self, result):
         return NotImplementedError()

@@ -251,7 +251,7 @@ def _restore_entity(population, directory):
         population.count = (
             int(numpy.load(count_path).item())
             if os.path.exists(count_path)
-            else max(population.members_entity_id) + 1
+            else max(population.members_entity_id, default=-1) + 1
         )
     elif len(population.ids) != population.count:
         population.ids = population._get_alive_ids_for_period(latest)
