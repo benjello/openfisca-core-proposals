@@ -500,6 +500,9 @@ class CorePopulation:
         if permanent_ids is None:
             permanent_ids = numpy.arange(self.count, dtype=numpy.intp)
         permanent_ids = self._validate_permanent_ids(permanent_ids, self.count)
+        if not self._dynamic:
+            for holder in self._holders.values():
+                holder._migrate_as_of_to_permanent_ids(permanent_ids)
         self._dynamic = True
         self._permanent_ids = permanent_ids.copy()
         self._set_period_identity_snapshot(snapshot_period, permanent_ids)

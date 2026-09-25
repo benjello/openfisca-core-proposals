@@ -1,4 +1,5 @@
 import numpy
+import pytest
 
 from openfisca_core import entities, periods, taxbenefitsystems, variables
 from openfisca_core.links import Many2OneLink
@@ -203,4 +204,70 @@ def test_as_of_transition_uses_the_period_population() -> None:
     numpy.testing.assert_array_equal(
         simulation.calculate("state", "2024-02"),
         [2, 3, 1],
+    )
+
+
+@pytest.mark.parametrize("permanent_ids", ([10, 20], [1, 0]))
+def test_dynamic_activation_migrates_existing_as_of_state(
+    permanent_ids,
+    tmp_path,
+) -> None:
+    class state(variables.Variable):
+        value_type = int
+        definition_period = periods.MONTH
+        as_of = True
+
+    simulation, tax_benefit_system = build_dynamic_simulation(
+        state_variable=state,
+    )
+    simulation = SimulationBuilder.build_default_simulation(
+        tax_benefit_system,
+        count=2,
+    )
+    simulation.set_input("state", "2024-01", [1, 2])
+    simulation.get_holder("state").set_input_sparse("2024-02", [0], [3])
+
+    simulation.persons.activate_dynamic_mode("2024-01", permanent_ids)
+
+    numpy.testing.assert_array_equal(
+        simulation.calculate("state", "2024-02"),
+        [3, 2],
+    )
+    numpy.testing.assert_array_equal(
+        simulation.clone().calculate("state", "2024-02"),
+        [3, 2],
+    )
+
+    directory = tmp_path / "simulation"
+    simulation_dumper.dump_simulation(simulation, str(directory))
+    restored = simulation_dumper.restore_simulation(
+        str(directory),
+        tax_benefit_system,
+    )
+    numpy.testing.assert_array_equal(
+        restored.calculate("state", "2024-02"),
+        [3, 2],
+    )
+
+
+def test_retroactive_birth_preserves_future_sparse_input() -> None:
+    class state(variables.Variable):
+        value_type = int
+        definition_period = periods.MONTH
+        as_of = True
+
+        def initial_formula(population, _period):
+            return numpy.arange(population.count) + 1
+
+    simulation, _ = build_dynamic_simulation(state_variable=state)
+    simulation.calculate("state", "2024-03")
+    holder = simulation.get_holder("state")
+    holder.set_input_sparse("2024-04", [1], [9])
+
+    simulation.persons.register_births("2024-02", [30])
+
+    assert periods.period("2024-04") in holder._input_periods
+    numpy.testing.assert_array_equal(
+        simulation.calculate("state", "2024-04"),
+        [1, 9, 3],
     )

@@ -175,7 +175,35 @@ class Holder:
                 None,
             )
             if replacement_position is None:
-                self._delete_as_of()
+                if self._as_of_base_source != "calculated":
+                    self._delete_as_of()
+                    return
+                retained_patches = [
+                    (patch, source)
+                    for patch, source in zip(
+                        self._as_of_patches,
+                        self._as_of_patch_sources,
+                        strict=True,
+                    )
+                    if patch[0] > period.stop and source != "calculated"
+                ]
+                self._as_of_base = None
+                self._as_of_base_instant = None
+                self._as_of_base_source = None
+                self._as_of_patches = [patch for patch, _ in retained_patches]
+                self._as_of_patch_sources = [source for _, source in retained_patches]
+                self._as_of_patch_instants = [
+                    patch[0] for patch in self._as_of_patches
+                ]
+                self._as_of_snapshots.clear()
+                self._as_of_explicit_periods = {
+                    known_period
+                    for known_period in self._as_of_explicit_periods
+                    if known_period.start > period.stop
+                }
+                self._as_of_known_periods = set(self._as_of_explicit_periods)
+                self._as_of_calculated_periods.clear()
+                self._as_of_transition_computed.clear()
                 return
 
             replacement = self._as_of_patches[replacement_position]
@@ -343,6 +371,20 @@ class Holder:
         self._as_of_base = self._immutable_array(base)
         self._as_of_snapshots.clear()
 
+    def _migrate_as_of_to_permanent_ids(self, permanent_ids) -> None:
+        """Move pre-dynamic state from row positions to permanent-ID positions."""
+        if not self._as_of or self._as_of_base is None:
+            return
+        capacity = int(numpy.max(permanent_ids)) + 1 if len(permanent_ids) else 0
+        base = self.variable.default_array(capacity)
+        base[permanent_ids] = self._as_of_base
+        self._as_of_base = self._immutable_array(base)
+        self._as_of_patches = [
+            (instant, self._immutable_array(permanent_ids[indices]), values)
+            for instant, indices, values in self._as_of_patches
+        ]
+        self._as_of_snapshots.clear()
+
     def _as_of_storage_value(self, value, period):
         if not self.population._dynamic:
             return value
@@ -455,7 +497,9 @@ class Holder:
             self._as_of_base = self._immutable_array(value)
             self._as_of_base_instant = instant
             self._as_of_base_source = source
-            self._cache_as_of_snapshot(instant, self._as_of_base, 0)
+            self._as_of_snapshots.clear()
+            if not self._as_of_patches or self._as_of_patch_instants[0] > instant:
+                self._cache_as_of_snapshot(instant, self._as_of_base, 0)
             return
 
         if instant < self._as_of_base_instant:
@@ -589,7 +633,7 @@ class Holder:
                 ),
             )
         self._record_as_of_period(period, as_of_source)
-        if as_of_source == "explicit":
+        if as_of_source != "calculated":
             self._input_periods.add(period)
         if self.population._dynamic:
             self._ensure_as_of_capacity()
