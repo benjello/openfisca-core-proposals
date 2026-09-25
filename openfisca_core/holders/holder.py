@@ -414,9 +414,7 @@ class Holder:
                 for array in (indices, values)
             )
             arrays.extend(snapshot for snapshot, _ in self._as_of_snapshots.values())
-            unique_arrays = {
-                id(array): array for array in arrays if array is not None
-            }
+            unique_arrays = {id(array): array for array in arrays if array is not None}
             usage.update(
                 {
                     "nb_arrays": len(unique_arrays),
