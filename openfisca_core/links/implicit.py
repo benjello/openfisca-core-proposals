@@ -42,6 +42,13 @@ class ImplicitMany2OneLink(Many2OneLink):
     def reference_entity(self):
         return self._target_population
 
+    @staticmethod
+    def _resolve_ids(ids, population) -> numpy.ndarray:
+        """Keep membership row numbers distinct from public entity IDs."""
+        rows = numpy.asarray(ids, dtype=numpy.intp)
+        valid = (rows >= 0) & (rows < population.count)
+        return numpy.where(valid, rows, -1)
+
     @property
     def role(self) -> numpy.ndarray:
         return self._target_population.members_role
