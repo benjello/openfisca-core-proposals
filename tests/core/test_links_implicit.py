@@ -147,6 +147,15 @@ def test_equal_population_sizes_do_not_confuse_projection():
     numpy.testing.assert_array_equal(grouped, [10, 20])
 
 
+def test_implicit_link_does_not_resolve_membership_rows_as_public_ids(simulation):
+    simulation.household.ids = numpy.array([1, 0])
+
+    numpy.testing.assert_array_equal(
+        simulation.persons.household("rent", "2024"),
+        [100, 100, 80],
+    )
+
+
 def test_implicit_links_use_the_tax_benefit_system_person_key():
     individu = entities.SingleEntity("individu", "individus", "", "")
     menage = entities.GroupEntity(
