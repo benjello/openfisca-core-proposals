@@ -127,6 +127,61 @@ def test_assignment_can_be_committed_atomically() -> None:
     ]
 
 
+def test_assignment_uses_latest_role_snapshot() -> None:
+    simulation, first_parent, second_parent, child = build_simulation()
+    simulation.household.set_roles_for_period(
+        "2024-02",
+        [second_parent, first_parent, child, first_parent, child, child],
+    )
+
+    roles = simulation.household.auto_assign_roles_for_period(
+        "2024-03",
+        [0, 0, 0, 1, 1, 1],
+    )
+
+    assert roles.tolist() == [
+        second_parent,
+        first_parent,
+        child,
+        first_parent,
+        child,
+        child,
+    ]
+
+
+def test_roles_are_remapped_by_id_when_person_count_is_unchanged() -> None:
+    simulation, first_parent, second_parent, child = build_simulation()
+    simulation.persons.activate_dynamic_mode("2024-01", [10, 20, 30, 40, 50, 60])
+    simulation.persons._set_period_identity_snapshot(
+        "2024-02",
+        numpy.array([20, 10, 30, 40, 50, 60]),
+    )
+
+    roles = simulation.household.auto_assign_roles_for_period(
+        "2024-02",
+        [0, 0, 0, 1, 1, 1],
+    )
+
+    assert roles.tolist() == [
+        second_parent,
+        first_parent,
+        child,
+        first_parent,
+        child,
+        child,
+    ]
+
+
+def test_carry_forward_roles_are_validated_against_new_membership() -> None:
+    simulation, _, _, _ = build_simulation()
+
+    with pytest.raises(ValueError, match="at most 1"):
+        simulation.household.set_members_for_period(
+            "2024-02",
+            [0, 0, 0, 0, 1, 1],
+        )
+
+
 def reference_assignment(population, membership):
     old_membership = population.members_entity_id
     old_roles = population.members_role
@@ -177,11 +232,11 @@ def test_vectorized_assignment_matches_sequential_strategy(seed) -> None:
     rng.shuffle(old_membership)
     new_membership = numpy.arange(person_count) % group_count
     rng.shuffle(new_membership)
-    old_roles = rng.choice(
-        [first_parent, second_parent, child],
-        size=person_count,
-        p=[0.1, 0.1, 0.8],
-    )
+    old_roles = numpy.full(person_count, child, dtype=object)
+    for group_id in range(group_count):
+        rows = numpy.flatnonzero(old_membership == group_id)
+        old_roles[rows[0]] = first_parent
+        old_roles[rows[1]] = second_parent
     simulation.persons.count = person_count
     simulation.household.count = group_count
     simulation.household.members_entity_id = old_membership
@@ -194,3 +249,7 @@ def test_vectorized_assignment_matches_sequential_strategy(seed) -> None:
     )
 
     assert actual.tolist() == expected.tolist()
+    for group_id in range(group_count):
+        group_roles = actual[new_membership == group_id]
+        assert numpy.count_nonzero(group_roles == first_parent) <= 1
+        assert numpy.count_nonzero(group_roles == second_parent) <= 1
