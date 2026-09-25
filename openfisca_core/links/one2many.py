@@ -12,7 +12,7 @@ class One2ManyLink(Link):
 
     def _target_values(self, variable_name: str, period) -> numpy.ndarray:
         try:
-            return self._target_population.simulation.calculate(variable_name, period)
+            return self._target_population(variable_name, period)
         except Exception as error:
             message = (
                 f"Link '{self.name}' could not calculate target variable "
@@ -22,10 +22,7 @@ class One2ManyLink(Link):
 
     def _source_rows(self, period) -> numpy.ndarray:
         try:
-            source_ids = self._target_population.simulation.calculate(
-                self.link_field,
-                period,
-            )
+            source_ids = self._target_population(self.link_field, period)
         except Exception as error:
             message = (
                 f"Link '{self.name}' could not read link field "
@@ -37,19 +34,23 @@ class One2ManyLink(Link):
     def _valid_values(self, variable_name: str, period, role=None, condition=None):
         values = self._target_values(variable_name, period)
         source_rows = self._source_rows(period)
-        valid = self._filter(source_rows, role, condition)
+        valid = self._filter(source_rows, role, condition, period)
         return source_rows[valid], values[valid]
 
-    def _filter(self, source_rows, role, condition) -> numpy.ndarray:
+    def _filter(self, source_rows, role, condition, period) -> numpy.ndarray:
         valid = source_rows >= 0
         if role is not None:
             if self.role_field is None:
                 message = f"Link '{self.name}' has no role_field"
                 raise ValueError(message)
-            roles = self._target_population.simulation.calculate(
-                self.role_field,
-                "eternity",
-            )
+            try:
+                roles = self._target_population(self.role_field, period)
+            except Exception as error:
+                message = (
+                    f"Link '{self.name}' could not read role field "
+                    f"'{self.role_field}': {error}"
+                )
+                raise LinkResolutionError(message) from error
             valid &= _role_matches(roles, role)
         if condition is not None:
             condition = numpy.asarray(condition, dtype=bool)
@@ -74,7 +75,7 @@ class One2ManyLink(Link):
     def count(self, period=None, *, role=None, condition=None) -> numpy.ndarray:
         """Count target members for each source entity."""
         source_rows = self._source_rows(period)
-        valid = self._filter(source_rows, role, condition)
+        valid = self._filter(source_rows, role, condition, period)
         return numpy.bincount(
             source_rows[valid],
             minlength=self._source_population.count,

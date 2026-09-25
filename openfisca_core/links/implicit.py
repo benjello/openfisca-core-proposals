@@ -89,7 +89,7 @@ class ImplicitOne2ManyLink(One2ManyLink):
     def _source_rows(self, period) -> numpy.ndarray:
         return self._source_population._get_members_entity_id(period)
 
-    def _filter(self, source_rows, role, condition) -> numpy.ndarray:
+    def _filter(self, source_rows, role, condition, period) -> numpy.ndarray:
         valid = source_rows >= 0
         if role is not None:
             valid &= _role_matches(self._source_population.members_role, role)
