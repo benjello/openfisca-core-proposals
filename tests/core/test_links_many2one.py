@@ -107,3 +107,8 @@ def test_many2one_rejects_variables_from_another_entity():
 
     with pytest.raises(LinkResolutionError, match="defined for 'households'"):
         simulation.persons.mother("rent", "2024")
+
+
+def test_many2one_rank_rejects_non_group_target(simulation):
+    with pytest.raises(ValueError, match="rank requires its target to group"):
+        simulation.persons.mother.rank("age", "2024")

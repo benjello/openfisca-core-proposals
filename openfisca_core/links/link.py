@@ -7,6 +7,16 @@ from collections.abc import Mapping
 import numpy
 
 
+def _role_matches(role_array, role_value) -> numpy.ndarray:
+    """Compare role objects and raw role keys uniformly."""
+    expected = getattr(role_value, "key", role_value)
+    return numpy.fromiter(
+        (getattr(role, "key", role) == expected for role in role_array),
+        dtype=bool,
+        count=len(role_array),
+    )
+
+
 class LinkResolutionError(RuntimeError):
     """Raised when a link cannot be resolved in a simulation."""
 
@@ -14,10 +24,20 @@ class LinkResolutionError(RuntimeError):
 class Link:
     """A named relationship between a source and a target entity."""
 
-    def __init__(self, name: str, link_field: str, target_entity_key: str) -> None:
+    def __init__(
+        self,
+        name: str,
+        link_field: str,
+        target_entity_key: str,
+        *,
+        role_field: str | None = None,
+        position_field: str | None = None,
+    ) -> None:
         self.name = name
         self.link_field = link_field
         self.target_entity_key = target_entity_key
+        self.role_field = role_field
+        self.position_field = position_field
         self._source_population = None
         self._target_population = None
 
@@ -91,4 +111,4 @@ class Link:
         )
 
 
-__all__ = ["Link", "LinkResolutionError"]
+__all__ = ["Link", "LinkResolutionError", "_role_matches"]
