@@ -38,7 +38,11 @@ class Population(CorePopulation):
     # Helpers
 
     @projectors.projectable
-    def has_role(self, role: t.Role) -> None | t.BoolArray:
+    def has_role(
+        self,
+        role: t.Role,
+        period: t.PeriodLike | None = None,
+    ) -> None | t.BoolArray:
         """Check if a person has a given role within its `GroupEntity`.
 
         Example:
@@ -53,12 +57,7 @@ class Population(CorePopulation):
 
         group_population = self.simulation.get_population(role.entity.plural)
 
-        if role.subroles:
-            return numpy.logical_or.reduce(
-                [group_population.members_role == subrole for subrole in role.subroles],
-            )
-
-        return group_population.members_role == role
+        return group_population._members_have_role(role, period)
 
     @projectors.projectable
     def value_from_partner(
@@ -66,6 +65,7 @@ class Population(CorePopulation):
         array: t.FloatArray,
         entity: projectors.Projector,
         role: t.Role,
+        period: t.PeriodLike | None = None,
     ) -> None | t.FloatArray:
         self.check_array_compatible_with_entity(array)
         self.entity.check_role_validity(role)
@@ -77,11 +77,14 @@ class Population(CorePopulation):
             )
 
         [subrole_1, subrole_2] = role.subroles
-        value_subrole_1 = entity.value_from_person(array, subrole_1)
-        value_subrole_2 = entity.value_from_person(array, subrole_2)
+        value_subrole_1 = entity.value_from_person(array, subrole_1, period=period)
+        value_subrole_2 = entity.value_from_person(array, subrole_2, period=period)
 
         return numpy.select(
-            [self.has_role(subrole_1), self.has_role(subrole_2)],
+            [
+                self.has_role(subrole_1, period),
+                self.has_role(subrole_2, period),
+            ],
             [value_subrole_2, value_subrole_1],
         )
 

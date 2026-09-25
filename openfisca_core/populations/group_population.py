@@ -19,6 +19,7 @@ class GroupPopulation(Population):
         self._members_position = None
         self._ordered_members_map = None
         self._members_entity_id_by_period = {}
+        self._members_role_by_period = {}
         self._members_position_by_period = {}
         self._ordered_members_map_by_period = {}
 
@@ -38,6 +39,7 @@ class GroupPopulation(Population):
         result._members_entity_id_by_period = dict(
             self._members_entity_id_by_period,
         )
+        result._members_role_by_period = dict(self._members_role_by_period)
         return result
 
     @staticmethod
@@ -73,6 +75,25 @@ class GroupPopulation(Population):
             return self._members_entity_id
         return self._members_entity_id_by_period[snapshot_period]
 
+    def _get_members_role(self, period=None):
+        if period is None or not self._members_role_by_period:
+            return self.members_role
+
+        requested = periods.period(period)
+        candidates = (
+            snapshot_period
+            for snapshot_period in self._members_role_by_period
+            if snapshot_period.start <= requested.start
+        )
+        snapshot_period = max(
+            candidates,
+            key=lambda item: item.start,
+            default=None,
+        )
+        if snapshot_period is None:
+            return self.members_role
+        return self._members_role_by_period[snapshot_period]
+
     def _get_members_position(self, period=None):
         snapshot_period = self._get_snapshot_period(period)
         if snapshot_period is None:
@@ -96,7 +117,50 @@ class GroupPopulation(Population):
             )
         return self._ordered_members_map_by_period[snapshot_period]
 
-    def set_members_for_period(self, period, members_entity_id) -> None:
+    def _validate_members_role(self, members_role, members_entity_id):
+        role_array = numpy.asarray(list(members_role), dtype=object)
+        if role_array.ndim != 1:
+            raise ValueError("members_role must be a one-dimensional array")
+        if len(role_array) != len(members_entity_id):
+            raise ValueError(
+                "members_role must contain one entry per member "
+                f"(expected {len(members_entity_id)}, got {len(role_array)})",
+            )
+
+        valid_roles = self.entity.flattened_roles
+        invalid_roles = [role for role in role_array if role not in valid_roles]
+        if invalid_roles:
+            raise ValueError(
+                "members_role must contain roles defined by the group entity",
+            )
+
+        for role in valid_roles:
+            if role.max is None:
+                continue
+            counts = numpy.bincount(
+                members_entity_id[role_array == role],
+                minlength=self.count,
+            )
+            if numpy.any(counts > role.max):
+                raise ValueError(
+                    f"Role {role.key!r} allows at most {role.max} member(s) per group",
+                )
+        return role_array
+
+    def _invalidate_period_caches(self, snapshot_period, next_start=None) -> None:
+        for holder in self._holders.values():
+            for known_period in list(holder.get_known_periods()):
+                if known_period.start < snapshot_period.start:
+                    continue
+                if next_start is None or known_period.start < next_start:
+                    holder.delete_arrays(known_period)
+
+    def set_members_for_period(
+        self,
+        period,
+        members_entity_id,
+        members_role=None,
+    ) -> None:
         """Set membership from ``period`` until the next explicit snapshot.
 
         This first dynamic-membership API keeps both person and group counts
@@ -127,9 +191,17 @@ class GroupPopulation(Population):
                 "set_members_for_period cannot change the number of groups",
             )
 
+        role_snapshot = (
+            None
+            if members_role is None
+            else self._validate_members_role(members_role, array)
+        )
         snapshot = array.astype(numpy.intp, copy=True)
         snapshot.flags.writeable = False
         self._members_entity_id_by_period[snapshot_period] = snapshot
+        if role_snapshot is not None:
+            role_snapshot.flags.writeable = False
+            self._members_role_by_period[snapshot_period] = role_snapshot
         self._members_position_by_period.pop(snapshot_period, None)
         self._ordered_members_map_by_period.pop(snapshot_period, None)
 
@@ -139,12 +211,33 @@ class GroupPopulation(Population):
             if item.start > snapshot_period.start
         ]
         next_start = min(next_starts, default=None)
-        for holder in self._holders.values():
-            for known_period in list(holder.get_known_periods()):
-                if known_period.start < snapshot_period.start:
-                    continue
-                if next_start is None or known_period.start < next_start:
-                    holder.delete_arrays(known_period)
+        self._invalidate_period_caches(snapshot_period, next_start)
+
+    def set_roles_for_period(self, period, members_role) -> None:
+        """Set member roles from ``period`` until the next role snapshot."""
+        snapshot_period = periods.period(period)
+        membership = self._get_members_entity_id(snapshot_period)
+        role_snapshot = self._validate_members_role(members_role, membership)
+        role_snapshot.flags.writeable = False
+        self._members_role_by_period[snapshot_period] = role_snapshot
+
+        next_starts = [
+            item.start
+            for item in self._members_role_by_period
+            if item.start > snapshot_period.start
+        ]
+        self._invalidate_period_caches(
+            snapshot_period,
+            min(next_starts, default=None),
+        )
+
+    def _members_have_role(self, role, period=None):
+        members_role = self._get_members_role(period)
+        if role.subroles:
+            return numpy.logical_or.reduce(
+                [members_role == subrole for subrole in role.subroles],
+            )
+        return members_role == role
 
     @property
     def members_position(self):
@@ -241,7 +334,7 @@ class GroupPopulation(Population):
         self.members.check_array_compatible_with_entity(array)
         members_entity_id = self._get_members_entity_id(period)
         if role is not None:
-            role_filter = self.members.has_role(role)
+            role_filter = self._members_have_role(role, period)
             return numpy.bincount(
                 members_entity_id[role_filter],
                 weights=array[role_filter],
@@ -277,7 +370,9 @@ class GroupPopulation(Population):
         self.members.check_array_compatible_with_entity(array)
         self.entity.check_role_validity(role)
         position_in_entity = self._get_members_position(period)
-        role_filter = self.members.has_role(role) if role is not None else True
+        role_filter = (
+            self._members_have_role(role, period) if role is not None else True
+        )
         filtered_array = numpy.where(role_filter, array, neutral_element)
 
         result = self.filled_array(
@@ -382,12 +477,7 @@ class GroupPopulation(Population):
         If ``role`` is provided, only the entity member with the given role are taken into account.
         """
         if role:
-            if role.subroles:
-                role_condition = numpy.logical_or.reduce(
-                    [self.members_role == subrole for subrole in role.subroles],
-                )
-            else:
-                role_condition = self.members_role == role
+            role_condition = self._members_have_role(role, period)
             return self.sum(role_condition, period=period)
         return numpy.bincount(
             self._get_members_entity_id(period),
@@ -417,7 +507,7 @@ class GroupPopulation(Population):
         result = self.filled_array(default, dtype=array.dtype)
         if isinstance(array, indexed_enums.EnumArray):
             result = indexed_enums.EnumArray(result, array.possible_values)
-        role_filter = self.members.has_role(role)
+        role_filter = self._members_have_role(role, period)
         entity_filter = self.any(role_filter, period=period)
 
         result[entity_filter] = array[members_map][role_filter[members_map]]
@@ -462,5 +552,5 @@ class GroupPopulation(Population):
         members_entity_id = self._get_members_entity_id(period)
         if role is None:
             return array[members_entity_id]
-        role_condition = self.members.has_role(role)
+        role_condition = self._members_have_role(role, period)
         return numpy.where(role_condition, array[members_entity_id], 0)
