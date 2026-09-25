@@ -43,6 +43,11 @@ def restore_simulation(directory, tax_benefit_system, **kwargs):
     entities_dump_dir = os.path.join(directory, "__entities__")
     for population in simulation.populations.values():
         _restore_entity(population, entities_dump_dir)
+        # ``_restore_entity`` already sets ``count`` from the dumped ids; dynamic
+        # populations override it with the latest period snapshot count.
+        if population._dynamic:
+            latest = max(population._period_index, key=lambda period: period.start)
+            population.count = population._period_index[latest]["count"]
 
     variables_to_restore = (
         variable for variable in os.listdir(directory) if variable != "__entities__"
