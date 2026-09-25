@@ -83,6 +83,38 @@ def test_dump_and_restore_as_of_history(tax_benefit_system, tmp_path) -> None:
     testing.assert_array_equal(holder.get_array("2018-04"), [1, 7])
 
 
+def test_dump_and_restore_preserves_dense_replacement_semantics(
+    tax_benefit_system,
+    tmp_path,
+) -> None:
+    class PersistentDenseState(Variable):
+        value_type = int
+        entity = tax_benefit_system.person_entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+    tax_benefit_system.add_variable(PersistentDenseState)
+    simulation = SimulationBuilder().build_from_entities(
+        tax_benefit_system,
+        situation_examples.couple,
+    )
+    simulation.set_input("PersistentDenseState", "2018-01", [1, 2])
+    simulation.set_input("PersistentDenseState", "2018-03", [1, 7])
+    directory = tmp_path / "simulation"
+    simulation_dumper.dump_simulation(simulation, str(directory))
+
+    restored = simulation_dumper.restore_simulation(
+        str(directory),
+        tax_benefit_system,
+    )
+    restored.set_input("PersistentDenseState", "2018-02", [8, 9])
+
+    holder = restored.get_holder("PersistentDenseState")
+    testing.assert_array_equal(holder.get_array("2018-03"), [1, 7])
+    assert holder._as_of_base_source == "explicit_dense"
+    assert holder._as_of_patch_sources == ["explicit_dense", "explicit_dense"]
+
+
 def test_dump_and_restore_preserves_as_of_provenance(
     tax_benefit_system,
     tmp_path,

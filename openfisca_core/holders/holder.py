@@ -136,7 +136,59 @@ class Holder:
             self._as_of_base_instant is not None
             and period.start <= self._as_of_base_instant <= period.stop
         ):
-            self._delete_as_of()
+            replacement_position = next(
+                (
+                    position
+                    for position, (patch, source) in enumerate(
+                        zip(
+                            self._as_of_patches,
+                            self._as_of_patch_sources,
+                            strict=True,
+                        ),
+                    )
+                    if patch[0] > period.stop and source == "explicit_dense"
+                ),
+                None,
+            )
+            if replacement_position is None:
+                self._delete_as_of()
+                return
+
+            replacement = self._as_of_patches[replacement_position]
+            self._as_of_base = self._immutable_array(replacement[2])
+            self._as_of_base_instant = replacement[0]
+            self._as_of_base_source = "explicit_dense"
+            retained_patches = [
+                (patch, source)
+                for patch, source in zip(
+                    self._as_of_patches[replacement_position + 1 :],
+                    self._as_of_patch_sources[replacement_position + 1 :],
+                    strict=True,
+                )
+                if source != "calculated"
+            ]
+            self._as_of_patches = [patch for patch, _ in retained_patches]
+            self._as_of_patch_sources = [source for _, source in retained_patches]
+            self._as_of_patch_instants = [patch[0] for patch in self._as_of_patches]
+            self._as_of_snapshots.clear()
+            self._cache_as_of_snapshot(
+                self._as_of_base_instant,
+                self._as_of_base,
+                0,
+            )
+            self._as_of_explicit_periods = {
+                known_period
+                for known_period in self._as_of_explicit_periods
+                if self._as_of_reference_instant(known_period)
+                >= self._as_of_base_instant
+                and not period.contains(known_period)
+            }
+            self._as_of_known_periods = set(self._as_of_explicit_periods)
+            self._as_of_calculated_periods.clear()
+            self._as_of_transition_computed = {
+                self._as_of_reference_instant(explicit_period)
+                for explicit_period in self._as_of_explicit_periods
+            }
             return
 
         retained_patches = [
@@ -278,7 +330,28 @@ class Holder:
             and self._as_of_base_instant >= cutoff
             and not preserve_calculated_base
         ):
-            self._delete_as_of()
+            retained_patches = [
+                (patch, source)
+                for patch, source in zip(
+                    self._as_of_patches,
+                    self._as_of_patch_sources,
+                    strict=True,
+                )
+                if source != "calculated"
+            ]
+            self._as_of_base = None
+            self._as_of_base_instant = None
+            self._as_of_base_source = None
+            self._as_of_patches = [patch for patch, _ in retained_patches]
+            self._as_of_patch_sources = [source for _, source in retained_patches]
+            self._as_of_patch_instants = [patch[0] for patch in self._as_of_patches]
+            self._as_of_snapshots.clear()
+            self._as_of_calculated_periods.clear()
+            self._as_of_known_periods = set(self._as_of_explicit_periods)
+            self._as_of_transition_computed = {
+                self._as_of_reference_instant(explicit_period)
+                for explicit_period in self._as_of_explicit_periods
+            }
             return
 
         retained_patches = [
@@ -317,7 +390,7 @@ class Holder:
 
     def _set_as_of(self, period, value, source) -> None:
         instant = period.start
-        if source == "explicit":
+        if source != "calculated":
             self._invalidate_as_of_calculations_from(period)
         self._record_as_of_period(period, source)
         self._as_of_transition_computed.add(self._as_of_reference_instant(period))
@@ -335,21 +408,42 @@ class Holder:
             self._as_of_base = self._immutable_array(value)
             self._as_of_base_instant = instant
             self._as_of_base_source = source
-            indices = numpy.arange(len(previous_base))
-            self._insert_as_of_patch(
-                previous_base_instant,
-                indices,
-                previous_base,
-                previous_base_source,
-            )
+            if previous_base_source == "explicit_dense":
+                indices = numpy.arange(len(previous_base))
+                self._insert_as_of_patch(
+                    previous_base_instant,
+                    indices,
+                    previous_base,
+                    previous_base_source,
+                )
+            else:
+                changed = previous_base != self._as_of_base
+                if changed.any():
+                    indices = numpy.flatnonzero(changed)
+                    self._insert_as_of_patch(
+                        previous_base_instant,
+                        indices,
+                        previous_base[indices],
+                        previous_base_source,
+                    )
             self._cache_as_of_snapshot(instant, self._as_of_base, 0)
             return
 
-        # A dense input replaces the entire state, including unchanged entries.
-        indices = numpy.arange(len(value))
-        self._insert_as_of_patch(instant, indices, value, source)
-        patch_count = bisect.bisect_right(self._as_of_patch_instants, instant)
-        self._cache_as_of_snapshot(instant, self._immutable_array(value), patch_count)
+        previous = self._reconstruct_as_of(instant)
+        changed = value != previous
+        if source == "explicit_dense" or changed.any():
+            indices = (
+                numpy.arange(len(value))
+                if source == "explicit_dense"
+                else numpy.flatnonzero(changed)
+            )
+            self._insert_as_of_patch(instant, indices, value[indices], source)
+            patch_count = bisect.bisect_right(self._as_of_patch_instants, instant)
+            self._cache_as_of_snapshot(
+                instant,
+                self._immutable_array(value),
+                patch_count,
+            )
 
     def set_input_sparse(
         self,
@@ -357,7 +451,7 @@ class Holder:
         indices,
         values,
         *,
-        as_of_source="explicit",
+        as_of_source="explicit_sparse",
     ) -> None:
         """Set selected values of an ``as_of`` variable as a sparse patch."""
         if not self._as_of:
@@ -424,7 +518,7 @@ class Holder:
             if as_of_source == "calculated":
                 self._record_as_of_period(period, as_of_source)
             return
-        if as_of_source == "explicit":
+        if as_of_source != "calculated":
             self._invalidate_as_of_calculations_from(
                 period,
                 preserve_calculated_base=(
@@ -654,7 +748,7 @@ class Holder:
                 )
         return value
 
-    def _set(self, period, value, *, as_of_source="explicit") -> None:
+    def _set(self, period, value, *, as_of_source="explicit_dense") -> None:
         value = self._to_array(value)
         self._check_set_period(period)
 
