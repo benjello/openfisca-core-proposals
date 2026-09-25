@@ -160,6 +160,63 @@ def test_snapshot_count_must_be_positive():
         InvalidVariable()
 
 
+def test_set_input_sparse_updates_selected_values():
+    holder = make_holder()
+    holder.set_input("2024-01", [1, 2, 3])
+    holder.set_input_sparse("2024-02", [0, 2], [10, 30])
+
+    numpy.testing.assert_array_equal(holder.get_array("2024-02"), [10, 2, 30])
+
+
+def test_set_input_sparse_broadcasts_scalar_and_ignores_unchanged_values():
+    holder = make_holder()
+    holder.set_input("2024-01", [1, 2, 1])
+    holder.set_input_sparse("2024-02", [0, 2], 1)
+
+    assert holder._as_of_patches == []
+
+
+def test_set_input_sparse_requires_as_of_and_base():
+    with pytest.raises(ValueError, match="only available for as_of"):
+        make_holder(RegularVariable).set_input_sparse("2024-01", [0], [1])
+
+    with pytest.raises(ValueError, match="Call set_input first"):
+        make_holder().set_input_sparse("2024-01", [0], [1])
+
+
+@pytest.mark.parametrize(
+    ("indices", "values", "message"),
+    [
+        ([0.5], [1], "integer array"),
+        ([[0]], [1], "one-dimensional"),
+        ([0, 0], [1, 2], "duplicates"),
+        ([0, 1], [1], "match the number"),
+    ],
+)
+def test_set_input_sparse_validates_shape(indices, values, message):
+    holder = make_holder()
+    holder.set_input("2024-01", [1, 2, 3])
+
+    with pytest.raises(ValueError, match=message):
+        holder.set_input_sparse("2024-02", indices, values)
+
+
+def test_set_input_sparse_validates_bounds():
+    holder = make_holder()
+    holder.set_input("2024-01", [1, 2, 3])
+
+    with pytest.raises(IndexError, match="between 0 and 2"):
+        holder.set_input_sparse("2024-02", [3], [1])
+
+
+def test_set_input_sparse_before_base_has_clear_error():
+    holder = make_holder()
+    holder.set_input("2024-02", [1, 2, 3])
+
+    with pytest.raises(ValueError, match="Use set_input to move the base"):
+        holder.set_input_sparse("2024-01", [0], [5])
+
+
 def test_as_of_end_uses_period_end_for_lookup():
     class AsOfEndVariable(Variable):
         value_type = int

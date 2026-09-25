@@ -204,6 +204,73 @@ class Holder:
         patch_count = bisect.bisect_right(self._as_of_patch_instants, instant)
         self._cache_as_of_snapshot(instant, self._immutable_array(value), patch_count)
 
+    def set_input_sparse(self, period, indices, values) -> None:
+        """Set selected values of an ``as_of`` variable as a sparse patch."""
+        if not self._as_of:
+            msg = (
+                f"set_input_sparse is only available for as_of variables; "
+                f'"{self.variable.name}" does not declare as_of.'
+            )
+            raise ValueError(msg)
+        if self._as_of_base is None:
+            msg = (
+                "set_input_sparse requires an initial state. Call set_input first "
+                "to establish the base."
+            )
+            raise ValueError(msg)
+
+        period = periods.period(period)
+        self._check_set_period(period)
+        if period.start < self._as_of_base_instant:
+            msg = (
+                f"Cannot set a sparse value at {period.start}, before the as_of "
+                f"base at {self._as_of_base_instant}. Use set_input to move the base."
+            )
+            raise ValueError(msg)
+
+        raw_indices = numpy.asarray(indices)
+        if raw_indices.ndim != 1 or raw_indices.dtype.kind not in "iu":
+            msg = "set_input_sparse indices must be a one-dimensional integer array."
+            raise ValueError(msg)
+        indices = raw_indices.astype(numpy.intp, copy=False)
+        if len(numpy.unique(indices)) != len(indices):
+            msg = "set_input_sparse indices must not contain duplicates."
+            raise ValueError(msg)
+        if ((indices < 0) | (indices >= self.population.count)).any():
+            msg = (
+                "set_input_sparse indices must be between 0 and "
+                f"{self.population.count - 1}."
+            )
+            raise IndexError(msg)
+
+        if self.variable.value_type == enums.Enum:
+            values = self.variable.possible_values.encode(values)
+        else:
+            values = numpy.asarray(values)
+        if values.ndim == 0:
+            values = numpy.full(len(indices), values, dtype=self.variable.dtype)
+        if values.ndim != 1 or len(values) != len(indices):
+            msg = (
+                "set_input_sparse values must be one-dimensional and match the "
+                f"number of indices ({len(indices)})."
+            )
+            raise ValueError(msg)
+        try:
+            values = values.astype(self.variable.dtype, copy=False)
+        except (TypeError, ValueError) as error:
+            msg = (
+                f'set_input_sparse values for "{self.variable.name}" cannot be '
+                f"converted to {self.variable.dtype}."
+            )
+            raise ValueError(msg) from error
+
+        if len(indices) == 0:
+            return
+        previous = self._reconstruct_as_of(period.start)
+        changed = values != previous[indices]
+        if changed.any():
+            self._insert_as_of_patch(period.start, indices[changed], values[changed])
+
     def get_memory_usage(self) -> t.MemoryUsage:
         """Get data about the virtual memory usage of the Holder.
 
@@ -374,6 +441,25 @@ class Holder:
 
     def _set(self, period, value) -> None:
         value = self._to_array(value)
+        self._check_set_period(period)
+
+        if self._as_of:
+            self._set_as_of(period, value)
+            return
+
+        should_store_on_disk = (
+            self._on_disk_storable
+            and self._memory_storage.get(period) is None
+            and psutil.virtual_memory().percent  # If there is already a value in memory, replace it and don't put a new value in the disk storage
+            >= self.simulation.memory_config.max_memory_occupation_pc
+        )
+
+        if should_store_on_disk:
+            self._disk_storage.put(value, period)
+        else:
+            self._memory_storage.put(value, period)
+
+    def _check_set_period(self, period) -> None:
         if not self._eternal:
             if period is None:
                 msg = (
@@ -404,22 +490,6 @@ class Holder:
                     self.variable.definition_period,
                     error_message,
                 )
-
-        if self._as_of:
-            self._set_as_of(period, value)
-            return
-
-        should_store_on_disk = (
-            self._on_disk_storable
-            and self._memory_storage.get(period) is None
-            and psutil.virtual_memory().percent  # If there is already a value in memory, replace it and don't put a new value in the disk storage
-            >= self.simulation.memory_config.max_memory_occupation_pc
-        )
-
-        if should_store_on_disk:
-            self._disk_storage.put(value, period)
-        else:
-            self._memory_storage.put(value, period)
 
     def put_in_cache(self, value, period) -> None:
         if self._do_not_store:
