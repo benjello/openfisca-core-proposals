@@ -200,6 +200,40 @@ def test_death_of_absent_id_is_rejected() -> None:
         simulation.persons.register_deaths("2024-03", [10])
 
 
+def test_lifecycle_events_before_activation_are_rejected_without_mutation() -> None:
+    simulation, _, _ = build_simulation()
+
+    with pytest.raises(ValueError, match="must be registered in order"):
+        simulation.persons.register_births("2023-12", [30])
+
+    numpy.testing.assert_array_equal(simulation.persons._permanent_ids, [10, 20])
+    numpy.testing.assert_array_equal(
+        simulation.persons._get_alive_ids_for_period("2024-01"),
+        [10, 20],
+    )
+
+
+def test_out_of_order_lifecycle_events_are_rejected() -> None:
+    simulation, _, _ = build_simulation()
+    simulation.persons.register_births("2024-03", [30])
+
+    with pytest.raises(ValueError, match="must be registered in order"):
+        simulation.persons.register_deaths("2024-02", [10])
+
+
+def test_snapshot_period_captures_the_final_ordered_state() -> None:
+    simulation, _, _ = build_simulation()
+    simulation.persons.register_deaths("2024-02", [10])
+
+    simulation.persons.snapshot_period("2024-03")
+
+    assert simulation.persons.get_count_for_period("2024-03") == 1
+    numpy.testing.assert_array_equal(
+        simulation.persons._get_alive_ids_for_period("2024-03"),
+        [20],
+    )
+
+
 def test_lifecycle_requires_explicit_activation() -> None:
     simulation, _, _ = build_simulation()
     other = SimulationBuilder.build_default_simulation(

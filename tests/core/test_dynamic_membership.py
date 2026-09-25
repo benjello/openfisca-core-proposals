@@ -157,6 +157,14 @@ def test_snapshot_periods_with_the_same_start_are_rejected() -> None:
         )
 
 
+def test_membership_events_are_rejected_out_of_order() -> None:
+    simulation = build_simulation()
+    simulation.household.set_members_for_period("2024-03", [0, 1, 0, 1])
+
+    with pytest.raises(ValueError, match="must be registered in order"):
+        simulation.household.set_members_for_period("2024-02", [0, 0, 1, 1])
+
+
 @pytest.mark.parametrize(
     ("membership", "message"),
     [
