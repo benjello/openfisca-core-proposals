@@ -275,47 +275,56 @@ class GroupPopulation(Population):
         old_roles = self._get_members_role(source_period)
         roles = self.entity.flattened_roles
         role_rank = {role: index for index, role in enumerate(roles)}
-        result = numpy.empty(len(new_membership), dtype=object)
-        assigned = numpy.zeros(len(new_membership), dtype=bool)
-        used = [dict.fromkeys(roles, 0) for _ in range(self.count)]
+        role_count = len(roles)
+        old_role_indices = numpy.fromiter(
+            (role_rank.get(role, 0) for role in old_roles),
+            dtype=numpy.intp,
+            count=len(new_membership),
+        )
+        is_stayer = numpy.asarray(old_membership) == new_membership
+        result_indices = numpy.full(len(new_membership), -1, dtype=numpy.intp)
+        result_indices[is_stayer] = old_role_indices[is_stayer]
+        used = numpy.zeros((self.count, role_count), dtype=numpy.intp)
+        numpy.add.at(
+            used,
+            (new_membership[is_stayer], old_role_indices[is_stayer]),
+            1,
+        )
+
+        search_orders = []
+        for old_rank in range(role_count):
+            order = [old_rank, *range(old_rank - 1, -1, -1)]
+            order.extend(range(old_rank + 1, role_count))
+            search_orders.append(order)
 
         for row, group_id in enumerate(new_membership):
-            if old_membership[row] != group_id:
+            if is_stayer[row]:
                 continue
-            role = old_roles[row]
-            result[row] = role
-            assigned[row] = True
-            used[int(group_id)][role] += 1
-
-        for row, group_id in enumerate(new_membership):
-            if assigned[row]:
-                continue
-            old_rank = role_rank.get(old_roles[row], 0)
-            search_order = [old_rank, *range(old_rank - 1, -1, -1)]
-            search_order.extend(range(old_rank + 1, len(roles)))
-            for rank in search_order:
+            for rank in search_orders[old_role_indices[row]]:
                 role = roles[rank]
-                if role.max is None or used[int(group_id)][role] < role.max:
-                    result[row] = role
-                    assigned[row] = True
-                    used[int(group_id)][role] += 1
+                if role.max is None or used[int(group_id), rank] < role.max:
+                    result_indices[row] = rank
+                    used[int(group_id), rank] += 1
                     break
-            if not assigned[row]:
+            if result_indices[row] < 0:
                 raise ValueError(f"No role is available in group {group_id}")
 
-        primary_role = roles[0]
-        for group_id in numpy.unique(new_membership):
-            group_id = int(group_id)
-            if used[group_id][primary_role]:
-                continue
-            members = numpy.flatnonzero(new_membership == group_id)
-            promoted = min(
-                members,
-                key=lambda row: (role_rank[result[row]], row),
+        active_groups = numpy.unique(new_membership)
+        missing_primary = active_groups[used[active_groups, 0] == 0]
+        if missing_primary.size:
+            rows = numpy.flatnonzero(numpy.isin(new_membership, missing_primary))
+            order = numpy.lexsort(
+                (rows, result_indices[rows], new_membership[rows]),
             )
-            used[group_id][result[promoted]] -= 1
-            result[promoted] = primary_role
-            used[group_id][primary_role] += 1
+            ordered_rows = rows[order]
+            ordered_groups = new_membership[ordered_rows]
+            first_in_group = numpy.concatenate(
+                ([True], ordered_groups[1:] != ordered_groups[:-1]),
+            )
+            result_indices[ordered_rows[first_in_group]] = 0
+
+        role_array = numpy.asarray(roles, dtype=object)
+        result = role_array[result_indices]
 
         return result
 
