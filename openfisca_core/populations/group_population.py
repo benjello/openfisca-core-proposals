@@ -67,6 +67,29 @@ class GroupPopulation(Population):
     def members_entity_id(self, members_entity_id) -> None:
         self._members_entity_id = members_entity_id
 
+    def set_members_entity_id(self, members_entity_id) -> None:
+        """Set and validate the group entity ID of each member."""
+        array = numpy.asarray(members_entity_id)
+        if array.ndim != 1:
+            raise ValueError("members_entity_id must be a one-dimensional array")
+        if array.size == 0:
+            raise ValueError("members_entity_id cannot be empty")
+        if len(array) != self.members.count:
+            raise ValueError(
+                "members_entity_id must contain one entry per member "
+                f"(expected {self.members.count}, got {len(array)})",
+            )
+        if not numpy.issubdtype(array.dtype, numpy.integer):
+            raise ValueError("members_entity_id must contain integer IDs")
+        if numpy.any(array < 0):
+            raise ValueError("members_entity_id must contain non-negative IDs")
+
+        self._members_entity_id = array.astype(numpy.intp, copy=False)
+        self.count = int(numpy.max(array)) + 1
+        self._members_position = None
+        self._ordered_members_map = None
+        self._members_role = None
+
     @property
     def members_role(self):
         if self._members_role is None:
