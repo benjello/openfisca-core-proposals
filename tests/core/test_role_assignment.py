@@ -1,4 +1,5 @@
 import numpy
+import pytest
 
 from openfisca_core import entities, taxbenefitsystems
 from openfisca_core.simulations import SimulationBuilder
@@ -124,3 +125,72 @@ def test_assignment_can_be_committed_atomically() -> None:
         child,
         child,
     ]
+
+
+def reference_assignment(population, membership):
+    old_membership = population.members_entity_id
+    old_roles = population.members_role
+    roles = population.entity.flattened_roles
+    role_rank = {role: index for index, role in enumerate(roles)}
+    result = numpy.empty(len(membership), dtype=object)
+    assigned = numpy.zeros(len(membership), dtype=bool)
+    used = [dict.fromkeys(roles, 0) for _ in range(population.count)]
+
+    for row, group_id in enumerate(membership):
+        if old_membership[row] == group_id:
+            result[row] = old_roles[row]
+            assigned[row] = True
+            used[group_id][old_roles[row]] += 1
+
+    for row, group_id in enumerate(membership):
+        if assigned[row]:
+            continue
+        old_rank = role_rank.get(old_roles[row], 0)
+        search_order = [old_rank, *range(old_rank - 1, -1, -1)]
+        search_order.extend(range(old_rank + 1, len(roles)))
+        for rank in search_order:
+            role = roles[rank]
+            if role.max is None or used[group_id][role] < role.max:
+                result[row] = role
+                assigned[row] = True
+                used[group_id][role] += 1
+                break
+
+    primary_role = roles[0]
+    for group_id in numpy.unique(membership):
+        if used[group_id][primary_role]:
+            continue
+        members = numpy.flatnonzero(membership == group_id)
+        promoted = min(members, key=lambda row: (role_rank[result[row]], row))
+        result[promoted] = primary_role
+
+    return result
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_vectorized_assignment_matches_sequential_strategy(seed) -> None:
+    simulation, first_parent, second_parent, child = build_simulation()
+    rng = numpy.random.default_rng(seed)
+    person_count = 120
+    group_count = 12
+    old_membership = numpy.arange(person_count) % group_count
+    rng.shuffle(old_membership)
+    new_membership = numpy.arange(person_count) % group_count
+    rng.shuffle(new_membership)
+    old_roles = rng.choice(
+        [first_parent, second_parent, child],
+        size=person_count,
+        p=[0.1, 0.1, 0.8],
+    )
+    simulation.persons.count = person_count
+    simulation.household.count = group_count
+    simulation.household.members_entity_id = old_membership
+    simulation.household.members_role = old_roles
+
+    expected = reference_assignment(simulation.household, new_membership)
+    actual = simulation.household.auto_assign_roles_for_period(
+        "2024-02",
+        new_membership,
+    )
+
+    assert actual.tolist() == expected.tolist()
