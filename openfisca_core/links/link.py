@@ -74,6 +74,9 @@ class Link:
             }
             for index, identifier in numpy.ndenumerate(ids):
                 rows[index] = row_by_id.get(identifier.item(), -1)
+            if numpy.issubdtype(ids.dtype, numpy.integer):
+                direct = (rows < 0) & (ids >= 0) & (ids < population.count)
+                rows[direct] = ids[direct]
             return rows
 
         if numpy.issubdtype(ids.dtype, numpy.integer):
