@@ -139,6 +139,9 @@ class Simulation:
 
         self._check_period_consistency(period, variable)
 
+        if variable.end is not None and period.start.date > variable.end:
+            return holder.default_array()
+
         if variable.has_initial_formula or variable.has_transition_formula:
             return self._calculate_as_of_transition(
                 variable,
