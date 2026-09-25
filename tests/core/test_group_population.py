@@ -46,3 +46,15 @@ def test_set_members_entity_id_rejects_invalid_values(
 
     with pytest.raises(ValueError, match=message):
         population.set_members_entity_id(members_entity_id)
+
+
+def test_members_entity_id_property_rejects_sparse_values(
+    tax_benefit_system,
+) -> None:
+    population = SimulationBuilder.build_default_simulation(
+        tax_benefit_system,
+        count=4,
+    ).household
+
+    with pytest.raises(ValueError, match="too sparse"):
+        population.members_entity_id = numpy.array([0, 0, 1, 1_000_000_000])

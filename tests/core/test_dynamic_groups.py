@@ -6,7 +6,7 @@ from openfisca_core.simulations import SimulationBuilder
 from openfisca_core.tools import simulation_dumper
 
 
-def build_simulation():
+def build_simulation(dynamic=True):
     person = entities.SingleEntity("person", "persons", "A person", "")
     household = entities.GroupEntity(
         "household",
@@ -42,8 +42,9 @@ def build_simulation():
     )
     simulation.household.ids = numpy.array(["household_0", "household_1"])
     simulation.household.set_members_entity_id([0, 0, 1])
-    simulation.persons.activate_dynamic_mode("2024-01", [10, 20, 30])
-    simulation.household.activate_dynamic_mode("2024-01")
+    if dynamic:
+        simulation.persons.activate_dynamic_mode("2024-01", [10, 20, 30])
+        simulation.household.activate_dynamic_mode("2024-01")
     return simulation, tax_benefit_system
 
 
@@ -134,6 +135,24 @@ def test_dump_restore_preserves_dynamic_group_counts(tmp_path) -> None:
         restored.household.nb_persons(period="2024-03"),
         [1, 0, 2],
     )
+
+
+def test_dump_restore_preserves_static_empty_group_count(tmp_path) -> None:
+    simulation, tax_benefit_system = build_simulation(dynamic=False)
+    simulation.household.ids = numpy.array(
+        ["household_0", "household_1", "household_2"],
+    )
+    simulation.household.count = 3
+    directory = tmp_path / "simulation"
+
+    simulation_dumper.dump_simulation(simulation, str(directory))
+    restored = simulation_dumper.restore_simulation(
+        str(directory),
+        tax_benefit_system,
+    )
+
+    assert restored.household.count == 3
+    numpy.testing.assert_array_equal(restored.household.nb_persons(), [2, 1, 0])
 
 
 def test_dump_restore_preserves_inputs_during_structure_invalidation(tmp_path) -> None:
