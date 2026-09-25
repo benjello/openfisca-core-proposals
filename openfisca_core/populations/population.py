@@ -121,7 +121,25 @@ class Population(CorePopulation):
             else entity.reference_entity
         )
 
+        if not hasattr(entity, "members_position"):
+            key = getattr(getattr(entity, "entity", None), "key", entity)
+            message = f"get_rank requires a group population; got '{key}'"
+            raise ValueError(message)
+
         positions = entity.members_position
+        if len(positions) != self.count or len(entity.members_entity_id) != self.count:
+            message = (
+                f"Group population '{entity.entity.key}' has inconsistent membership "
+                f"for {self.count} members"
+            )
+            raise ValueError(message)
+        if numpy.any(entity.members_entity_id < 0) or numpy.any(
+            entity.members_entity_id >= entity.count
+        ):
+            message = (
+                f"Group population '{entity.entity.key}' contains invalid entity rows"
+            )
+            raise ValueError(message)
         biggest_entity_size = numpy.max(positions) + 1
         filtered_criteria = numpy.where(condition, criteria, numpy.inf)
         ids = entity.members_entity_id
