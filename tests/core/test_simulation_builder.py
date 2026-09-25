@@ -1,6 +1,7 @@
 import datetime
 from collections.abc import Iterable
 
+import numpy
 import pytest
 from openfisca_country_template import entities, situation_examples
 
@@ -83,6 +84,47 @@ def test_build_default_simulation(tax_benefit_system) -> None:
     assert (
         several_persons_simulation.household.members_role == entities.Household.ADULT
     ).all()
+
+
+def test_build_default_simulation_with_group_members(tax_benefit_system) -> None:
+    simulation = SimulationBuilder.build_default_simulation(
+        tax_benefit_system,
+        count=4,
+        group_members={"household": numpy.array([0, 0, 2, 2])},
+    )
+
+    numpy.testing.assert_array_equal(simulation.persons.ids, [0, 1, 2, 3])
+    numpy.testing.assert_array_equal(simulation.persons._id_to_rownum, [0, 1, 2, 3])
+    assert simulation.household.count == 3
+    numpy.testing.assert_array_equal(simulation.household.ids, [0, 1, 2])
+    numpy.testing.assert_array_equal(simulation.household._id_to_rownum, [0, 1, 2])
+    numpy.testing.assert_array_equal(
+        simulation.household.members_entity_id,
+        [0, 0, 2, 2],
+    )
+    assert (simulation.household.members_role == entities.Household.ADULT).all()
+
+
+@pytest.mark.parametrize(
+    ("group_members", "message"),
+    [
+        ({"unknown": numpy.array([0, 0, 1, 1])}, "Unknown group entity keys"),
+        ({"household": numpy.array([0, 0, 1])}, "one entry per member"),
+        ({"household": numpy.array([0.0, 0.0, 1.0, 1.0])}, "integer IDs"),
+        ({"household": numpy.array([0, 0, -1, 1])}, "non-negative IDs"),
+    ],
+)
+def test_build_default_simulation_rejects_invalid_group_members(
+    tax_benefit_system,
+    group_members,
+    message,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        SimulationBuilder.build_default_simulation(
+            tax_benefit_system,
+            count=4,
+            group_members=group_members,
+        )
 
 
 def test_explicit_singular_entities(tax_benefit_system) -> None:
