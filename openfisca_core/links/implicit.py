@@ -11,6 +11,24 @@ from .many2one import Many2OneLink
 from .one2many import One2ManyLink
 
 
+class _ProjectedCallable:
+    """Callable proxy that preserves attributes and projects group results."""
+
+    def __init__(self, function, link) -> None:
+        self._function = function
+        self._link = link
+
+    def __call__(self, *args, **kwargs):
+        result = self._function(*args, **kwargs)
+        return self._link._project_entity_result(result)
+
+    def __getattr__(self, name: str):
+        attribute = getattr(self._function, name)
+        if callable(attribute):
+            return _ProjectedCallable(attribute, self._link)
+        return attribute
+
+
 class ImplicitMany2OneLink(Many2OneLink):
     """A person-to-group link backed by ``members_entity_id``."""
 
@@ -31,6 +49,17 @@ class ImplicitMany2OneLink(Many2OneLink):
     def role(self) -> numpy.ndarray:
         return self._target_population.members_role
 
+    def _project_entity_result(self, result):
+        """Project a result known to have one value per target entity."""
+        result = numpy.asarray(result)
+        if result.size != self._target_population.count:
+            message = (
+                f"Link '{self.name}' expected {self._target_population.count} "
+                f"entity values, got {result.size}"
+            )
+            raise ValueError(message)
+        return self._target_population.project(result)
+
     def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(name)
@@ -41,13 +70,7 @@ class ImplicitMany2OneLink(Many2OneLink):
             "projectable",
             False,
         ):
-
-            def projected(*args, **kwargs):
-                return self._target_population.project(
-                    target_attribute(*args, **kwargs)
-                )
-
-            return projected
+            return _ProjectedCallable(target_attribute, self)
         return target_attribute
 
 
