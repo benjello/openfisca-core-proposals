@@ -156,11 +156,37 @@ def test_top_level_projector_uses_explicit_membership_period() -> None:
 def test_dynamic_membership_is_preserved_and_isolated_by_clone() -> None:
     simulation = build_simulation()
     simulation.household.set_members_for_period("2024-02", [0, 1, 0, 1])
+    simulation.household.members_position
+    simulation.household.ordered_members_map
+    simulation.household._get_members_position("2024-03")
+    simulation.household._get_ordered_members_map("2024-03")
 
     clone = simulation.clone()
+    assert clone.household.members is clone.persons
+    assert not numpy.shares_memory(simulation.persons.ids, clone.persons.ids)
+    assert not numpy.shares_memory(simulation.household.ids, clone.household.ids)
+    for source, copied in (
+        (simulation.household._members_entity_id, clone.household._members_entity_id),
+        (simulation.household._members_role, clone.household._members_role),
+        (simulation.household._members_position, clone.household._members_position),
+        (
+            simulation.household._ordered_members_map,
+            clone.household._ordered_members_map,
+        ),
+    ):
+        assert not numpy.shares_memory(source, copied)
+    for attribute in (
+        "_members_entity_id_by_period",
+        "_members_role_by_period",
+        "_members_position_by_period",
+        "_ordered_members_map_by_period",
+    ):
+        source = getattr(simulation.household, attribute)[periods.period("2024-02")]
+        copied = getattr(clone.household, attribute)[periods.period("2024-02")]
+        assert not numpy.shares_memory(source, copied)
+
     clone.household.set_members_for_period("2024-02", [0, 1, 1, 0])
 
-    assert clone.household.members is clone.persons
     numpy.testing.assert_array_equal(
         simulation.household._get_members_entity_id("2024-03"),
         [0, 1, 0, 1],

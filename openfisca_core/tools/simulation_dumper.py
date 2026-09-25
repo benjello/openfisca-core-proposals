@@ -79,6 +79,7 @@ def _dump_entity(population, directory) -> None:
     path = os.path.join(directory, population.entity.key)
     os.mkdir(path)
     numpy.save(os.path.join(path, "id.npy"), population.ids)
+    numpy.save(os.path.join(path, "count.npy"), population.count)
 
     if population._period_index:
         snapshot_periods = sorted(
