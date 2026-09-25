@@ -2,7 +2,7 @@ import numpy
 import pytest
 
 from openfisca_core import entities, periods, taxbenefitsystems, variables
-from openfisca_core.links import One2ManyLink
+from openfisca_core.links import Many2OneLink, One2ManyLink
 from openfisca_core.simulations import SimulationBuilder
 
 
@@ -16,7 +16,22 @@ def simulation():
         "",
         roles=[{"key": "member"}],
     )
-    household.add_link(One2ManyLink("residents", "household_id", "person"))
+    person.add_link(
+        Many2OneLink(
+            "household",
+            "household_id",
+            "household",
+            role_field="resident_role",
+        )
+    )
+    household.add_link(
+        One2ManyLink(
+            "residents",
+            "household_id",
+            "person",
+            role_field="resident_role",
+        )
+    )
     tax_benefit_system = taxbenefitsystems.TaxBenefitSystem([person, household])
 
     class salary(variables.Variable):
@@ -30,16 +45,33 @@ def simulation():
         definition_period = periods.ETERNITY
         default_value = -1
 
-    for variable in (salary, household_id):
+    class resident_role(variables.Variable):
+        value_type = str
+        entity = person
+        definition_period = periods.ETERNITY
+
+    for variable in (salary, household_id, resident_role):
         tax_benefit_system.add_variable(variable)
 
     result = SimulationBuilder().build_from_dict(
         tax_benefit_system,
         {
             "persons": {
-                "a": {"salary": {"2024": 10}, "household_id": {"ETERNITY": 0}},
-                "b": {"salary": {"2024": 20}, "household_id": {"ETERNITY": 0}},
-                "c": {"salary": {"2024": 5}, "household_id": {"ETERNITY": 1}},
+                "a": {
+                    "salary": {"2024": 10},
+                    "household_id": {"ETERNITY": 0},
+                    "resident_role": {"ETERNITY": "adult"},
+                },
+                "b": {
+                    "salary": {"2024": 20},
+                    "household_id": {"ETERNITY": 0},
+                    "resident_role": {"ETERNITY": "child"},
+                },
+                "c": {
+                    "salary": {"2024": 5},
+                    "household_id": {"ETERNITY": 1},
+                    "resident_role": {"ETERNITY": "adult"},
+                },
                 "outside": {"salary": {"2024": 99}},
             },
             "households": {
@@ -67,3 +99,31 @@ def test_one2many_boolean_aggregations(simulation):
 
     numpy.testing.assert_array_equal(link.any("salary", "2024"), [True, True, False])
     numpy.testing.assert_array_equal(link.all("salary", "2024"), [True, True, True])
+
+
+def test_one2many_role_condition_and_nth(simulation):
+    link = simulation.household.residents
+    condition = numpy.array([True, False, False, True])
+
+    numpy.testing.assert_array_equal(
+        link.sum("salary", "2024", role="adult"),
+        [10, 5, 0],
+    )
+    numpy.testing.assert_array_equal(
+        link.sum("salary", "2024", condition=condition),
+        [10, 0, 0],
+    )
+    numpy.testing.assert_array_equal(link.nth(1, "salary", "2024"), [20, 0, 0])
+
+    with pytest.raises(ValueError, match="condition has shape"):
+        link.count("2024", condition=[True])
+
+
+def test_many2one_role_and_rank(simulation):
+    link = simulation.persons.household
+
+    numpy.testing.assert_array_equal(
+        link.has_role("adult"),
+        [True, False, True, False],
+    )
+    numpy.testing.assert_array_equal(link.rank("salary", "2024"), [0, 1, 0, 1])
