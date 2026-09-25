@@ -242,14 +242,19 @@ class Holder:
             return self.variable.set_input(self, period, array)
         return self._set(period, array)
 
-    def _to_array(self, value):
+    def _to_array(self, value, period=None):
         if not isinstance(value, numpy.ndarray):
             value = numpy.asarray(value)
         if value.ndim == 0:
             # 0-dim arrays are casted to scalar when they interact with float. We don't want that.
             value = value.reshape(1)
-        if len(value) != self.population.count:
-            msg = f'Unable to set value "{value}" for variable "{self.variable.name}", as its length is {len(value)} while there are {self.population.count} {self.population.entity.plural} in the simulation.'
+        expected_count = (
+            self.population.get_count_for_period(period)
+            if period is not None and self.population._dynamic
+            else self.population.count
+        )
+        if len(value) != expected_count:
+            msg = f'Unable to set value "{value}" for variable "{self.variable.name}", as its length is {len(value)} while there are {expected_count} {self.population.entity.plural} in the simulation.'
             raise ValueError(
                 msg,
             )
@@ -266,7 +271,7 @@ class Holder:
         return value
 
     def _set(self, period, value) -> None:
-        value = self._to_array(value)
+        value = self._to_array(value, period)
         if not self._eternal:
             if period is None:
                 msg = (

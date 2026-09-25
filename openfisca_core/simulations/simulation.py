@@ -62,6 +62,7 @@ class Simulation:
         self.memory_config = None
         self._data_storage_dir = None
         self.start_computation_period = None
+        self._calculation_stack = []
 
     @property
     def trace(self):
@@ -109,6 +110,9 @@ class Simulation:
         if period is not None and not isinstance(period, periods.Period):
             period = periods.period(period)
 
+        if not hasattr(self, "_calculation_stack"):
+            self._calculation_stack = []
+        self._calculation_stack.append(period)
         self.tracer.record_calculation_start(variable_name, period)
 
         try:
@@ -118,6 +122,7 @@ class Simulation:
 
         finally:
             self.tracer.record_calculation_end()
+            self._calculation_stack.pop()
             self.purge_cache_of_invalid_values()
 
     def _calculate(self, variable_name: str, period: periods.Period):
@@ -144,29 +149,40 @@ class Simulation:
         if cached_array is not None:
             return cached_array
 
-        array = None
-
-        # First, try to run a formula
-        if self.start_computation_period is not None:
-            if not isinstance(self.start_computation_period, periods.Period):
-                self.start_computation_period = periods.period(
-                    self.start_computation_period
-                )
-            if period < self.start_computation_period:
-                return holder.default_array()
+        previous_state = None
+        if population._dynamic:
+            mapping = population.get_period_id_to_rownum(period)
+            if mapping is not None:
+                previous_state = (population.count, population._id_to_rownum)
+                population.count = population.get_count_for_period(period)
+                population._id_to_rownum = mapping
         try:
-            self._check_for_cycle(variable.name, period)
-            array = self._run_formula(variable, population, period)
+            array = None
 
-            # If no result, use the default value and cache it
-            if array is None:
+            # First, try to run a formula
+            if self.start_computation_period is not None:
+                if not isinstance(self.start_computation_period, periods.Period):
+                    self.start_computation_period = periods.period(
+                        self.start_computation_period
+                    )
+                if period < self.start_computation_period:
+                    return holder.default_array()
+            try:
+                self._check_for_cycle(variable.name, period)
+                array = self._run_formula(variable, population, period)
+
+                # If no result, use the default value and cache it
+                if array is None:
+                    array = holder.default_array()
+
+                array = self._cast_formula_result(array, variable)
+                holder.put_in_cache(array, period)
+
+            except errors.SpiralError:
                 array = holder.default_array()
-
-            array = self._cast_formula_result(array, variable)
-            holder.put_in_cache(array, period)
-
-        except errors.SpiralError:
-            array = holder.default_array()
+        finally:
+            if previous_state is not None:
+                population.count, population._id_to_rownum = previous_state
 
         return array
 
@@ -219,10 +235,21 @@ class Simulation:
                 msg,
             )
 
-        return sum(
-            self.calculate(variable_name, sub_period)
-            for sub_period in period.get_subperiods(variable.definition_period)
-        )
+        sub_periods = period.get_subperiods(variable.definition_period)
+        population = self.get_variable_population(variable_name)
+        target_period = sub_periods[-1]
+        arrays = []
+        for sub_period in sub_periods:
+            value = self.calculate(variable_name, sub_period)
+            if population._dynamic:
+                value = population.remap_array(
+                    value,
+                    sub_period,
+                    target_period,
+                    variable.default_value,
+                )
+            arrays.append(value)
+        return sum(arrays)
 
     def calculate_divide(self, variable_name: str, period):
         variable: Variable | None
@@ -309,7 +336,16 @@ class Simulation:
         else:
             denominator = calculation_period.size_in_weekdays
 
-        return self.calculate(variable_name, calculation_period) / denominator
+        result = self.calculate(variable_name, calculation_period)
+        population = self.get_variable_population(variable_name)
+        if population._dynamic:
+            result = population.remap_array(
+                result,
+                calculation_period,
+                period,
+                variable.default_value,
+            )
+        return result / denominator
 
     def calculate_output(self, variable_name: str, period):
         """Calculate the value of a variable using the ``calculate_output`` attribute of the variable."""
@@ -595,6 +631,7 @@ class Simulation:
                 new_dict[key] = value
 
         new.persons = self.persons.clone(new)
+        new._calculation_stack = []
         setattr(new, new.persons.entity.key, new.persons)
         new.populations = {new.persons.entity.key: new.persons}
 

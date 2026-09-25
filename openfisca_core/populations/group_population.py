@@ -52,6 +52,8 @@ class GroupPopulation(Population):
 
     @staticmethod
     def _compute_members_position(members_entity_id):
+        if len(members_entity_id) == 0:
+            return numpy.array([], dtype=numpy.int32)
         nb_entities = numpy.max(members_entity_id) + 1
         nb_persons = len(members_entity_id)
         order = numpy.argsort(members_entity_id, kind="stable")
@@ -155,13 +157,20 @@ class GroupPopulation(Population):
                 )
         return role_array
 
-    def _invalidate_period_caches(self, snapshot_period, next_start=None) -> None:
-        for holder in self._holders.values():
-            for known_period in list(holder.get_known_periods()):
-                if known_period.start < snapshot_period.start:
-                    continue
-                if next_start is None or known_period.start < next_start:
-                    holder.delete_arrays(known_period)
+    def _check_members_array(self, array, period=None) -> None:
+        expected_count = (
+            self.members.get_count_for_period(period)
+            if period is not None and self.members._dynamic
+            else self.members.count
+        )
+        if array.size != expected_count:
+            from ._errors import InvalidArraySizeError
+
+            raise InvalidArraySizeError(
+                array,
+                self.members.entity.key,
+                expected_count,
+            )
 
     def set_members_for_period(
         self,
@@ -180,10 +189,15 @@ class GroupPopulation(Population):
             raise ValueError("members_entity_id must be a one-dimensional array")
         if array.size == 0:
             raise ValueError("members_entity_id cannot be empty")
-        if len(array) != self.members.count:
+        expected_count = (
+            self.members.get_count_for_period(snapshot_period)
+            if self.members._dynamic
+            else self.members.count
+        )
+        if len(array) != expected_count:
             raise ValueError(
                 "members_entity_id must contain one entry per member "
-                f"(expected {self.members.count}, got {len(array)})",
+                f"(expected {expected_count}, got {len(array)})",
             )
         if not numpy.issubdtype(array.dtype, numpy.integer):
             raise ValueError("members_entity_id must contain integer IDs")
@@ -268,20 +282,51 @@ class GroupPopulation(Population):
         new_membership = numpy.asarray(members_entity_id)
         if new_membership.ndim != 1:
             raise ValueError("members_entity_id must be a one-dimensional array")
-        if len(new_membership) != self.members.count:
+        expected_count = (
+            self.members.get_count_for_period(period)
+            if self.members._dynamic
+            else self.members.count
+        )
+        if len(new_membership) != expected_count:
             raise ValueError(
                 "members_entity_id must contain one entry per member "
-                f"(expected {self.members.count}, got {len(new_membership)})",
+                f"(expected {expected_count}, got {len(new_membership)})",
             )
         if not numpy.issubdtype(new_membership.dtype, numpy.integer):
             raise ValueError("members_entity_id must contain integer IDs")
         if numpy.any(new_membership < 0) or numpy.any(new_membership >= self.count):
             raise ValueError("members_entity_id contains an unknown group ID")
 
-        source_period = period if previous_period is None else previous_period
+        if previous_period is None:
+            target_period = periods.period(period)
+            identity_periods = [
+                item
+                for item in self.members._period_index
+                if item.start < target_period.start
+            ]
+            source_period = max(
+                identity_periods,
+                key=lambda item: item.start,
+                default=target_period,
+            )
+        else:
+            source_period = periods.period(previous_period)
         old_membership = self._get_members_entity_id(source_period)
         old_roles = self._get_members_role(source_period)
         roles = self.entity.flattened_roles
+        if self.members._dynamic:
+            old_membership = self.members.remap_array(
+                numpy.asarray(old_membership),
+                source_period,
+                period,
+                default=-1,
+            )
+            old_roles = self.members.remap_array(
+                numpy.asarray(old_roles, dtype=object),
+                source_period,
+                period,
+                default=roles[0],
+            )
         role_rank = {role: index for index, role in enumerate(roles)}
         role_count = len(roles)
         old_role_indices = numpy.fromiter(
@@ -428,7 +473,7 @@ class GroupPopulation(Population):
 
         """
         self.entity.check_role_validity(role)
-        self.members.check_array_compatible_with_entity(array)
+        self._check_members_array(array, period)
         members_entity_id = self._get_members_entity_id(period)
         if role is not None:
             role_filter = self._members_have_role(role, period)
@@ -464,7 +509,7 @@ class GroupPopulation(Population):
 
     @projectors.projectable
     def reduce(self, array, reducer, neutral_element, role=None, period=None):
-        self.members.check_array_compatible_with_entity(array)
+        self._check_members_array(array, period)
         self.entity.check_role_validity(role)
         position_in_entity = self._get_members_position(period)
         role_filter = (
@@ -599,7 +644,7 @@ class GroupPopulation(Population):
             raise Exception(
                 msg,
             )
-        self.members.check_array_compatible_with_entity(array)
+        self._check_members_array(array, period)
         members_map = self._get_ordered_members_map(period)
         result = self.filled_array(default, dtype=array.dtype)
         if isinstance(array, indexed_enums.EnumArray):
@@ -621,7 +666,7 @@ class GroupPopulation(Population):
 
         The result is a vector which dimension is the number of entities.
         """
-        self.members.check_array_compatible_with_entity(array)
+        self._check_members_array(array, period)
         positions = self._get_members_position(period)
         nb_persons_per_entity = self.nb_persons(period=period)
         members_map = self._get_ordered_members_map(period)
