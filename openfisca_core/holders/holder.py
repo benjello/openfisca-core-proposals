@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import os
 import warnings
 from collections.abc import Sequence
@@ -32,7 +33,13 @@ class Holder:
         self.variable = variable
         self.simulation = population.simulation
         self._eternal = self.variable.definition_period == periods.DateUnit.ETERNITY
+        self._as_of = self.variable.as_of
         self._memory_storage = storage.InMemoryStorage(is_eternal=self._eternal)
+        if self._as_of:
+            self._as_of_base = None
+            self._as_of_base_instant = None
+            self._as_of_patches = []
+            self._as_of_patch_instants = []
 
         # By default, do not activate on-disk storage, or variable dropping
         self._disk_storage = None
@@ -56,6 +63,10 @@ class Holder:
         for key, value in self.__dict__.items():
             if key not in ("population", "formula", "simulation"):
                 new_dict[key] = value
+
+        if self._as_of:
+            new_dict["_as_of_patches"] = list(self._as_of_patches)
+            new_dict["_as_of_patch_instants"] = list(self._as_of_patch_instants)
 
         new_dict["population"] = population
         new_dict["simulation"] = population.simulation
@@ -90,12 +101,73 @@ class Holder:
         """
         if self.variable.is_neutralized:
             return self.default_array()
+        if self._as_of:
+            return self._get_as_of(periods.period(period))
         value = self._memory_storage.get(period)
         if value is not None:
             return value
         if self._disk_storage:
             return self._disk_storage.get(period)
         return None
+
+    def _get_as_of(self, period):
+        target = period.start if self._as_of == "start" else period.stop
+        return self._reconstruct_as_of(target)
+
+    def _reconstruct_as_of(self, target):
+        if self._as_of_base is None or target < self._as_of_base_instant:
+            return None
+
+        patch_count = bisect.bisect_right(self._as_of_patch_instants, target)
+        if patch_count == 0:
+            return self._as_of_base
+
+        result = self._as_of_base.copy()
+        for _, indices, values in self._as_of_patches[:patch_count]:
+            result[indices] = values
+        result.flags.writeable = False
+        return result
+
+    @staticmethod
+    def _immutable_array(value):
+        result = value.copy()
+        result.flags.writeable = False
+        return result
+
+    def _insert_as_of_patch(self, instant, indices, values) -> None:
+        indices = self._immutable_array(indices.astype(numpy.int32, copy=False))
+        values = self._immutable_array(values)
+        position = bisect.bisect_right(self._as_of_patch_instants, instant)
+        self._as_of_patch_instants.insert(position, instant)
+        self._as_of_patches.insert(position, (instant, indices, values))
+
+    def _set_as_of(self, period, value) -> None:
+        instant = period.start
+        if self._as_of_base is None:
+            self._as_of_base = self._immutable_array(value)
+            self._as_of_base_instant = instant
+            return
+
+        if instant < self._as_of_base_instant:
+            previous_base = self._as_of_base
+            previous_base_instant = self._as_of_base_instant
+            self._as_of_base = self._immutable_array(value)
+            self._as_of_base_instant = instant
+            changed = previous_base != self._as_of_base
+            if changed.any():
+                indices = numpy.flatnonzero(changed)
+                self._insert_as_of_patch(
+                    previous_base_instant,
+                    indices,
+                    previous_base[indices],
+                )
+            return
+
+        previous = self._reconstruct_as_of(instant)
+        changed = value != previous
+        if changed.any():
+            indices = numpy.flatnonzero(changed)
+            self._insert_as_of_patch(instant, indices, value[indices])
 
     def get_memory_usage(self) -> t.MemoryUsage:
         """Get data about the virtual memory usage of the Holder.
@@ -297,6 +369,10 @@ class Holder:
                     self.variable.definition_period,
                     error_message,
                 )
+
+        if self._as_of:
+            self._set_as_of(period, value)
+            return
 
         should_store_on_disk = (
             self._on_disk_storable

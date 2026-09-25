@@ -174,6 +174,14 @@ class Variable:
             "introspection_data",
         )
 
+        self.as_of = self.set(attr, "as_of", setter=self.set_as_of)
+        if self.as_of and self.set_input:
+            msg = (
+                f'Variable "{self.name}" declares both as_of and set_input, '
+                "which are incompatible."
+            )
+            raise ValueError(msg)
+
         formulas_attr, unexpected_attrs = helpers._partition(
             attr,
             lambda name, value: name.startswith(config.FORMULA_NAME_PREFIX),
@@ -296,6 +304,19 @@ class Variable:
         if documentation:
             return textwrap.dedent(documentation)
         return None
+
+    def set_as_of(self, value):
+        if value is None or value is False:
+            return False
+        if value is True or value == "start":
+            return "start"
+        if value == "end":
+            return "end"
+        msg = (
+            f"Invalid value '{value}' for attribute 'as_of' in variable "
+            f"'{self.name}'. Allowed values are True, 'start', 'end', and False."
+        )
+        raise ValueError(msg)
 
     def set_set_input(self, set_input):
         if not set_input and self.baseline_variable:
