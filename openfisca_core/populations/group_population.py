@@ -4,7 +4,7 @@ import typing
 
 import numpy
 
-from openfisca_core import entities, indexed_enums, projectors
+from openfisca_core import entities, indexed_enums, periods, projectors
 
 from . import types as t
 from .population import Population
@@ -18,12 +18,16 @@ class GroupPopulation(Population):
         self._members_role = None
         self._members_position = None
         self._ordered_members_map = None
+        self._members_entity_id_by_period = {}
+        self._members_position_by_period = {}
+        self._ordered_members_map_by_period = {}
 
     def clone(self, simulation):
-        result = GroupPopulation(self.entity, self.members)
+        result = GroupPopulation(self.entity, simulation.persons)
         result.simulation = simulation
         result._holders = {
-            variable: holder.clone(self) for (variable, holder) in self._holders.items()
+            variable: holder.clone(result)
+            for (variable, holder) in self._holders.items()
         }
         result.count = self.count
         result.ids = self.ids
@@ -31,27 +35,123 @@ class GroupPopulation(Population):
         result._members_role = self._members_role
         result._members_position = self._members_position
         result._ordered_members_map = self._ordered_members_map
+        result._members_entity_id_by_period = dict(
+            self._members_entity_id_by_period,
+        )
         return result
+
+    @staticmethod
+    def _compute_members_position(members_entity_id):
+        nb_entities = numpy.max(members_entity_id) + 1
+        nb_persons = len(members_entity_id)
+        order = numpy.argsort(members_entity_id, kind="stable")
+        sorted_ids = members_entity_id[order]
+        group_sizes = numpy.bincount(sorted_ids, minlength=nb_entities)
+        group_starts = numpy.empty(nb_entities, dtype=numpy.intp)
+        group_starts[0] = 0
+        numpy.cumsum(group_sizes[:-1], out=group_starts[1:])
+        positions_sorted = numpy.arange(nb_persons) - group_starts[sorted_ids]
+        result = numpy.empty(nb_persons, dtype=numpy.int32)
+        result[order] = positions_sorted
+        return result
+
+    def _get_snapshot_period(self, period):
+        if period is None or not self._members_entity_id_by_period:
+            return None
+
+        requested = periods.period(period)
+        candidates = (
+            snapshot_period
+            for snapshot_period in self._members_entity_id_by_period
+            if snapshot_period.start <= requested.start
+        )
+        return max(candidates, key=lambda item: item.start, default=None)
+
+    def _get_members_entity_id(self, period=None):
+        snapshot_period = self._get_snapshot_period(period)
+        if snapshot_period is None:
+            return self._members_entity_id
+        return self._members_entity_id_by_period[snapshot_period]
+
+    def _get_members_position(self, period=None):
+        snapshot_period = self._get_snapshot_period(period)
+        if snapshot_period is None:
+            return self.members_position
+        if snapshot_period not in self._members_position_by_period:
+            self._members_position_by_period[snapshot_period] = (
+                self._compute_members_position(
+                    self._members_entity_id_by_period[snapshot_period],
+                )
+            )
+        return self._members_position_by_period[snapshot_period]
+
+    def _get_ordered_members_map(self, period=None):
+        snapshot_period = self._get_snapshot_period(period)
+        if snapshot_period is None:
+            return self.ordered_members_map
+        if snapshot_period not in self._ordered_members_map_by_period:
+            self._ordered_members_map_by_period[snapshot_period] = numpy.argsort(
+                self._members_entity_id_by_period[snapshot_period],
+                kind="stable",
+            )
+        return self._ordered_members_map_by_period[snapshot_period]
+
+    def set_members_for_period(self, period, members_entity_id) -> None:
+        """Set membership from ``period`` until the next explicit snapshot.
+
+        This first dynamic-membership API keeps both person and group counts
+        constant. Group creation and dissolution are handled by a later API.
+        """
+        snapshot_period = periods.period(period)
+        array = numpy.asarray(members_entity_id)
+        if array.ndim != 1:
+            raise ValueError("members_entity_id must be a one-dimensional array")
+        if array.size == 0:
+            raise ValueError("members_entity_id cannot be empty")
+        if len(array) != self.members.count:
+            raise ValueError(
+                "members_entity_id must contain one entry per member "
+                f"(expected {self.members.count}, got {len(array)})",
+            )
+        if not numpy.issubdtype(array.dtype, numpy.integer):
+            raise ValueError("members_entity_id must contain integer IDs")
+        if numpy.any(array < 0):
+            raise ValueError("members_entity_id must contain non-negative IDs")
+        if numpy.any(array >= self.count):
+            raise ValueError(
+                "members_entity_id must reference an existing group "
+                f"(valid IDs are 0 to {self.count - 1})",
+            )
+        if int(numpy.max(array)) + 1 != self.count:
+            raise ValueError(
+                "set_members_for_period cannot change the number of groups",
+            )
+
+        snapshot = array.astype(numpy.intp, copy=True)
+        snapshot.flags.writeable = False
+        self._members_entity_id_by_period[snapshot_period] = snapshot
+        self._members_position_by_period.pop(snapshot_period, None)
+        self._ordered_members_map_by_period.pop(snapshot_period, None)
+
+        next_starts = [
+            item.start
+            for item in self._members_entity_id_by_period
+            if item.start > snapshot_period.start
+        ]
+        next_start = min(next_starts, default=None)
+        for holder in self._holders.values():
+            for known_period in list(holder.get_known_periods()):
+                if known_period.start < snapshot_period.start:
+                    continue
+                if next_start is None or known_period.start < next_start:
+                    holder.delete_arrays(known_period)
 
     @property
     def members_position(self):
         if self._members_position is None and self.members_entity_id is not None:
-            # We could use self.count and self.members.count , but with the current initialization, we are not sure count will be set before members_position is called
-            nb_entities = numpy.max(self.members_entity_id) + 1
-            nb_persons = len(self.members_entity_id)
-            # Sort persons by entity to group them
-            order = numpy.argsort(self.members_entity_id, kind="stable")
-            sorted_ids = self.members_entity_id[order]
-            # Compute the start index of each entity's group in the sorted array
-            group_sizes = numpy.bincount(sorted_ids, minlength=nb_entities)
-            group_starts = numpy.empty(nb_entities, dtype=numpy.intp)
-            group_starts[0] = 0
-            numpy.cumsum(group_sizes[:-1], out=group_starts[1:])
-            # Position within group = global sorted index - group start
-            positions_sorted = numpy.arange(nb_persons) - group_starts[sorted_ids]
-            # Scatter back to original order
-            self._members_position = numpy.empty(nb_persons, dtype=numpy.int32)
-            self._members_position[order] = positions_sorted
+            self._members_position = self._compute_members_position(
+                self.members_entity_id,
+            )
 
         return self._members_position
 
@@ -122,7 +222,7 @@ class GroupPopulation(Population):
     #  Aggregation persons -> entity
 
     @projectors.projectable
-    def sum(self, array, role=None):
+    def sum(self, array, role=None, period=None):
         """Return the sum of ``array`` for the members of the entity.
 
         ``array`` must have the dimension of the number of persons in the simulation
@@ -139,17 +239,22 @@ class GroupPopulation(Population):
         """
         self.entity.check_role_validity(role)
         self.members.check_array_compatible_with_entity(array)
+        members_entity_id = self._get_members_entity_id(period)
         if role is not None:
             role_filter = self.members.has_role(role)
             return numpy.bincount(
-                self.members_entity_id[role_filter],
+                members_entity_id[role_filter],
                 weights=array[role_filter],
                 minlength=self.count,
             )
-        return numpy.bincount(self.members_entity_id, weights=array)
+        return numpy.bincount(
+            members_entity_id,
+            weights=array,
+            minlength=self.count,
+        )
 
     @projectors.projectable
-    def any(self, array, role=None):
+    def any(self, array, role=None, period=None):
         """Return ``True`` if ``array`` is ``True`` for any members of the entity.
 
         ``array`` must have the dimension of the number of persons in the simulation
@@ -164,14 +269,14 @@ class GroupPopulation(Population):
         >>> array([True])
 
         """
-        sum_in_entity = self.sum(array, role=role)
+        sum_in_entity = self.sum(array, role=role, period=period)
         return sum_in_entity > 0
 
     @projectors.projectable
-    def reduce(self, array, reducer, neutral_element, role=None):
+    def reduce(self, array, reducer, neutral_element, role=None, period=None):
         self.members.check_array_compatible_with_entity(array)
         self.entity.check_role_validity(role)
-        position_in_entity = self.members_position
+        position_in_entity = self._get_members_position(period)
         role_filter = self.members.has_role(role) if role is not None else True
         filtered_array = numpy.where(role_filter, array, neutral_element)
 
@@ -184,13 +289,18 @@ class GroupPopulation(Population):
         biggest_entity_size = numpy.max(position_in_entity) + 1
 
         for p in range(biggest_entity_size):
-            values = self.value_nth_person(p, filtered_array, default=neutral_element)
+            values = self.value_nth_person(
+                p,
+                filtered_array,
+                default=neutral_element,
+                period=period,
+            )
             result = reducer(result, values)
 
         return result
 
     @projectors.projectable
-    def all(self, array, role=None):
+    def all(self, array, role=None, period=None):
         """Return ``True`` if ``array`` is ``True`` for all members of the entity.
 
         ``array`` must have the dimension of the number of persons in the simulation
@@ -210,10 +320,11 @@ class GroupPopulation(Population):
             reducer=numpy.logical_and,
             neutral_element=True,
             role=role,
+            period=period,
         )
 
     @projectors.projectable
-    def max(self, array, role=None):
+    def max(self, array, role=None, period=None):
         """Return the maximum value of ``array`` for the entity members.
 
         ``array`` must have the dimension of the number of persons in the simulation
@@ -233,10 +344,11 @@ class GroupPopulation(Population):
             reducer=numpy.maximum,
             neutral_element=-numpy.inf,
             role=role,
+            period=period,
         )
 
     @projectors.projectable
-    def min(self, array, role=None):
+    def min(self, array, role=None, period=None):
         """Return the minimum value of ``array`` for the entity members.
 
         ``array`` must have the dimension of the number of persons in the simulation
@@ -260,10 +372,11 @@ class GroupPopulation(Population):
             reducer=numpy.minimum,
             neutral_element=numpy.inf,
             role=role,
+            period=period,
         )
 
     @projectors.projectable
-    def nb_persons(self, role=None):
+    def nb_persons(self, role=None, period=None):
         """Returns the number of persons contained in the entity.
 
         If ``role`` is provided, only the entity member with the given role are taken into account.
@@ -275,13 +388,16 @@ class GroupPopulation(Population):
                 )
             else:
                 role_condition = self.members_role == role
-            return self.sum(role_condition)
-        return numpy.bincount(self.members_entity_id)
+            return self.sum(role_condition, period=period)
+        return numpy.bincount(
+            self._get_members_entity_id(period),
+            minlength=self.count,
+        )
 
     # Projection person -> entity
 
     @projectors.projectable
-    def value_from_person(self, array, role, default=0):
+    def value_from_person(self, array, role, default=0, period=None):
         """Get the value of ``array`` for the person with the unique role ``role``.
 
         ``array`` must have the dimension of the number of persons in the simulation
@@ -297,19 +413,19 @@ class GroupPopulation(Population):
                 msg,
             )
         self.members.check_array_compatible_with_entity(array)
-        members_map = self.ordered_members_map
+        members_map = self._get_ordered_members_map(period)
         result = self.filled_array(default, dtype=array.dtype)
         if isinstance(array, indexed_enums.EnumArray):
             result = indexed_enums.EnumArray(result, array.possible_values)
         role_filter = self.members.has_role(role)
-        entity_filter = self.any(role_filter)
+        entity_filter = self.any(role_filter, period=period)
 
         result[entity_filter] = array[members_map][role_filter[members_map]]
 
         return result
 
     @projectors.projectable
-    def value_nth_person(self, n, array, default=0):
+    def value_nth_person(self, n, array, default=0, period=None):
         """Get the value of array for the person whose position in the entity is n.
 
         Note that this position is arbitrary, and that members are not sorted.
@@ -319,9 +435,9 @@ class GroupPopulation(Population):
         The result is a vector which dimension is the number of entities.
         """
         self.members.check_array_compatible_with_entity(array)
-        positions = self.members_position
-        nb_persons_per_entity = self.nb_persons()
-        members_map = self.ordered_members_map
+        positions = self._get_members_position(period)
+        nb_persons_per_entity = self.nb_persons(period=period)
+        members_map = self._get_ordered_members_map(period)
         result = self.filled_array(default, dtype=array.dtype)
         # For households that have at least n persons, set the result as the value of criteria for the person for which the position is n.
         # The map is needed b/c the order of the nth persons of each household in the persons vector is not necessarily the same than the household order.
@@ -335,15 +451,16 @@ class GroupPopulation(Population):
         return result
 
     @projectors.projectable
-    def value_from_first_person(self, array):
-        return self.value_nth_person(0, array)
+    def value_from_first_person(self, array, period=None):
+        return self.value_nth_person(0, array, period=period)
 
     # Projection entity -> person(s)
 
-    def project(self, array, role=None):
+    def project(self, array, role=None, period=None):
         self.check_array_compatible_with_entity(array)
         self.entity.check_role_validity(role)
+        members_entity_id = self._get_members_entity_id(period)
         if role is None:
-            return array[self.members_entity_id]
+            return array[members_entity_id]
         role_condition = self.members.has_role(role)
-        return numpy.where(role_condition, array[self.members_entity_id], 0)
+        return numpy.where(role_condition, array[members_entity_id], 0)
