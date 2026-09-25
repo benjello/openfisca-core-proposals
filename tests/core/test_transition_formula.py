@@ -363,6 +363,59 @@ def test_retroactive_input_recalculates_future_transitions():
     assert len(calls) == 3
 
 
+def test_deleting_historical_period_recalculates_future_transitions():
+    calls = []
+
+    class State(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+        def transition_formula(person, period):  # noqa: N805
+            calls.append(period)
+            previous = person("State", period.last_month)
+            return numpy.arange(3), previous + 1
+
+    simulation = make_simulation(State)
+    simulation.set_input("State", "2024-01", [0, 0, 0])
+    simulation.calculate("State", "2024-03")
+
+    simulation.get_holder("State").delete_arrays("2024-02")
+
+    numpy.testing.assert_array_equal(
+        simulation.calculate("State", "2024-03"),
+        [2, 2, 2],
+    )
+    assert calls == [
+        period("2024-03"),
+        period("2024-02"),
+        period("2024-03"),
+        period("2024-02"),
+    ]
+
+
+def test_sparse_input_can_patch_calculated_base_at_same_period():
+    class State(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+        def initial_formula(person, period):  # noqa: N805
+            return [1, 2, 3]
+
+    simulation = make_simulation(State)
+    simulation.calculate("State", "2024-01")
+
+    simulation.get_holder("State").set_input_sparse("2024-01", [1], [9])
+
+    numpy.testing.assert_array_equal(
+        simulation.calculate("State", "2024-01"),
+        [1, 9, 3],
+    )
+
+
 def test_trace_records_initial_and_transition_formula_types():
     class State(Variable):
         value_type = int

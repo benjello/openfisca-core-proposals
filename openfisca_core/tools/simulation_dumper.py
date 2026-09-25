@@ -3,9 +3,12 @@ import os
 import numpy
 
 from openfisca_core.data_storage import OnDiskStorage
-from openfisca_core.indexed_enums import Enum
-from openfisca_core.periods import DateUnit
+from openfisca_core.indexed_enums import Enum, EnumArray
+from openfisca_core.periods import DateUnit, instant, period as parse_period
 from openfisca_core.simulations import Simulation
+
+
+AS_OF_STATE_FILE = "__as_of_state.npz"
 
 
 def dump_simulation(simulation, directory) -> None:
@@ -62,9 +65,33 @@ def restore_simulation(directory, tax_benefit_system, **kwargs):
 
 def _dump_holder(holder, directory) -> None:
     disk_storage = holder.create_disk_storage(directory, preserve=True)
-    for period in holder.get_known_periods():
-        value = holder.get_array(period)
-        disk_storage.put(value, period)
+    for known_period in holder.get_known_periods():
+        value = holder.get_array(known_period)
+        disk_storage.put(value, known_period)
+    if holder.variable.as_of and holder._as_of_base is not None:
+        state = {
+            "base": holder._as_of_base,
+            "base_instant": str(holder._as_of_base_instant),
+            "base_source": holder._as_of_base_source,
+            "patch_instants": [str(item) for item in holder._as_of_patch_instants],
+            "patch_sources": holder._as_of_patch_sources,
+            "known_periods": [
+                str(item) for item in sorted(holder._as_of_known_periods)
+            ],
+            "explicit_periods": [
+                str(item) for item in sorted(holder._as_of_explicit_periods)
+            ],
+            "calculated_periods": [
+                str(item) for item in sorted(holder._as_of_calculated_periods)
+            ],
+            "transition_computed": [
+                str(item) for item in sorted(holder._as_of_transition_computed)
+            ],
+        }
+        for index, (_, indices, values) in enumerate(holder._as_of_patches):
+            state[f"patch_{index}_indices"] = indices
+            state[f"patch_{index}_values"] = values
+        numpy.savez(os.path.join(disk_storage.storage_dir, AS_OF_STATE_FILE), **state)
 
 
 def _dump_entity(population, directory) -> None:
@@ -140,6 +167,49 @@ def _restore_holder(simulation, variable_name, directory) -> None:
     )
     disk_storage.restore()
 
-    for period in disk_storage.get_known_periods():
-        value = disk_storage.get(period)
-        holder.put_in_cache(value, period)
+    as_of_state_path = os.path.join(storage_dir, AS_OF_STATE_FILE)
+    if holder.variable.as_of and os.path.isfile(as_of_state_path):
+        _restore_as_of_holder(holder, as_of_state_path)
+        return
+
+    for known_period in disk_storage.get_known_periods():
+        value = disk_storage.get(known_period)
+        holder.put_in_cache(value, known_period)
+
+
+def _restore_as_of_holder(holder, state_path) -> None:
+    with numpy.load(state_path, allow_pickle=False) as state:
+
+        def restore_array(value, *, enum=False):
+            array = state[value]
+            if enum and holder.variable.value_type == Enum:
+                array = EnumArray(array, holder.variable.possible_values)
+            return holder._immutable_array(array)
+
+        holder._as_of_base = restore_array("base", enum=True)
+        holder._as_of_base_instant = instant(str(state["base_instant"]))
+        holder._as_of_base_source = str(state["base_source"])
+        holder._as_of_patch_instants = [
+            instant(str(value)) for value in state["patch_instants"]
+        ]
+        holder._as_of_patch_sources = state["patch_sources"].tolist()
+        holder._as_of_patches = [
+            (
+                patch_instant,
+                restore_array(f"patch_{index}_indices"),
+                restore_array(f"patch_{index}_values", enum=True),
+            )
+            for index, patch_instant in enumerate(holder._as_of_patch_instants)
+        ]
+        holder._as_of_known_periods = {
+            parse_period(str(value)) for value in state["known_periods"]
+        }
+        holder._as_of_explicit_periods = {
+            parse_period(str(value)) for value in state["explicit_periods"]
+        }
+        holder._as_of_calculated_periods = {
+            parse_period(str(value)) for value in state["calculated_periods"]
+        }
+        holder._as_of_transition_computed = {
+            instant(str(value)) for value in state["transition_computed"]
+        }
