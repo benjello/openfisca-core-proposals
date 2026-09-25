@@ -1,9 +1,11 @@
 import numpy
 import pytest
+from types import SimpleNamespace
 
 from openfisca_core import entities, periods, taxbenefitsystems, variables
 from openfisca_core.links.implicit import ImplicitMany2OneLink, ImplicitOne2ManyLink
 from openfisca_core.simulations import SimulationBuilder
+from openfisca_core.simulations.simulation import Simulation
 
 
 @pytest.fixture
@@ -75,3 +77,34 @@ def test_implicit_link_keeps_projector_shortcuts_working(simulation):
         simulation.persons.household.first_person("salary", "2024"),
         [10, 10, 5],
     )
+
+
+def test_implicit_links_use_the_tax_benefit_system_person_key():
+    individu = entities.SingleEntity("individu", "individus", "", "")
+    menage = entities.GroupEntity(
+        "menage",
+        "menages",
+        "",
+        "",
+        roles=[{"key": "membre"}],
+    )
+    tax_benefit_system = taxbenefitsystems.TaxBenefitSystem([individu, menage])
+    simulation = SimulationBuilder().build_default_simulation(
+        tax_benefit_system,
+        count=2,
+    )
+
+    link = simulation.menage.individus
+    assert link.target_entity_key == "individu"
+    assert link._target_population is simulation.persons
+
+
+def test_link_resolution_tolerates_entities_without_links():
+    population = SimpleNamespace(entity=SimpleNamespace(key="legacy"))
+    simulation = object.__new__(Simulation)
+    simulation.persons = population
+    simulation.populations = {"legacy": population}
+
+    simulation._resolve_links()
+
+    assert population.links == {}
