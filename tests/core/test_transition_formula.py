@@ -231,3 +231,41 @@ def test_temporal_recursion_is_allowed_but_exact_cycle_is_stopped():
         cyclic_simulation.calculate("CyclicState", "2024-02"),
         [0, 0, 0],
     )
+
+
+def test_trace_records_initial_and_transition_formula_types():
+    class State(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+        def initial_formula(person, period):  # noqa: N805
+            return numpy.array([1, 2, 3])
+
+        def transition_formula(person, period):  # noqa: N805
+            return [], []
+
+    simulation = make_simulation(State)
+    simulation.trace = True
+    simulation.calculate("State", "2024-01")
+    simulation.calculate("State", "2024-02")
+
+    nodes = list(simulation.tracer.browse_trace())
+    assert [node.formula_type for node in nodes] == ["initial", "transition"]
+    assert (
+        "[initial]"
+        in simulation.tracer.computation_log.lines(
+            show_formula_type=True,
+        )[0]
+    )
+    assert (
+        "[transition]"
+        in simulation.tracer.computation_log.lines(
+            show_formula_type=True,
+        )[1]
+    )
+    assert all(
+        "[initial]" not in line and "[transition]" not in line
+        for line in simulation.tracer.computation_log.lines()
+    )
