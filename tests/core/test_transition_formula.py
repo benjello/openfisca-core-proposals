@@ -291,7 +291,7 @@ def test_initial_formula_backward_recursion_with_only_future_base_is_rejected():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             return person("State", period.last_month)
 
     simulation = make_simulation(State)
@@ -404,7 +404,7 @@ def test_future_dense_input_still_replaces_after_retroactive_invalidation():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             previous = person("State", period.last_month)
             return numpy.arange(3), previous + 1
 
@@ -431,7 +431,7 @@ def test_future_dense_input_survives_invalidated_calculated_base():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             return person.filled_array(0)
 
     simulation = make_simulation(State)
