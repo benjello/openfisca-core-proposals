@@ -2,6 +2,7 @@ import numpy
 import pytest
 
 from openfisca_core import entities, periods, taxbenefitsystems, variables
+from openfisca_core.errors import CycleError, SpiralError
 from openfisca_core.links import Many2OneLink, One2ManyLink
 from openfisca_core.links.link import LinkResolutionError
 from openfisca_core.simulations import SimulationBuilder
@@ -161,3 +162,17 @@ def test_links_validate_role_field_entity(simulation):
         simulation.persons.household.has_role("adult", "2024")
     with pytest.raises(LinkResolutionError, match="defined for 'households'"):
         simulation.household.residents.count("2024", role="adult")
+
+
+@pytest.mark.parametrize("error_type", [CycleError, SpiralError])
+def test_one2many_preserves_engine_errors(simulation, error_type):
+    link = simulation.household.residents
+
+    class FailingPopulation:
+        def __call__(self, _variable_name, _period):
+            raise error_type("engine failure")
+
+    link._target_population = FailingPopulation()
+
+    with pytest.raises(error_type, match="engine failure"):
+        link._target_values("salary", "2024")

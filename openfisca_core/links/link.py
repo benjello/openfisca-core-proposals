@@ -6,6 +6,10 @@ from collections.abc import Mapping
 
 import numpy
 
+from openfisca_core.errors import CycleError, SpiralError
+
+_ENGINE_ERRORS = (CycleError, SpiralError)
+
 
 def _role_matches(role_array, role_value) -> numpy.ndarray:
     """Compare role objects and raw role keys uniformly."""
@@ -105,6 +109,10 @@ class Link:
         return rows
 
     def _resolve_ids_for_period(self, ids, population, period) -> numpy.ndarray:
+        """Resolve IDs against a period snapshot and restore mutable state.
+
+        The temporary population mutation makes concurrent calls non-thread-safe.
+        """
         if period is None or not getattr(population, "_dynamic", False):
             return self._resolve_ids(ids, population)
         previous_state = (population.count, population._id_to_rownum)

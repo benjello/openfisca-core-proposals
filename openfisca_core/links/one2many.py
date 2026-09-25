@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy
 
-from .link import Link, LinkResolutionError, _role_matches
+from .link import _ENGINE_ERRORS, Link, LinkResolutionError, _role_matches
 
 
 class One2ManyLink(Link):
@@ -13,6 +13,8 @@ class One2ManyLink(Link):
     def _target_values(self, variable_name: str, period) -> numpy.ndarray:
         try:
             return self._target_population(variable_name, period)
+        except _ENGINE_ERRORS:
+            raise
         except Exception as error:
             message = (
                 f"Link '{self.name}' could not calculate target variable "
@@ -23,6 +25,8 @@ class One2ManyLink(Link):
     def _source_rows(self, period) -> numpy.ndarray:
         try:
             source_ids = self._target_population(self.link_field, period)
+        except _ENGINE_ERRORS:
+            raise
         except Exception as error:
             message = (
                 f"Link '{self.name}' could not read link field "
@@ -54,6 +58,8 @@ class One2ManyLink(Link):
                 raise ValueError(message)
             try:
                 roles = self._target_population(self.role_field, period)
+            except _ENGINE_ERRORS:
+                raise
             except Exception as error:
                 message = (
                     f"Link '{self.name}' could not read role field "

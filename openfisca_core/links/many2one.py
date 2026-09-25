@@ -13,7 +13,7 @@ from openfisca_core.populations._errors import (
     InvalidOptionError,
 )
 
-from .link import Link, LinkResolutionError, _role_matches
+from .link import _ENGINE_ERRORS, Link, LinkResolutionError, _role_matches
 
 
 class Many2OneLink(Link):
@@ -34,6 +34,8 @@ class Many2OneLink(Link):
 
         try:
             target_ids = self._get_target_ids(projection_period)
+        except _ENGINE_ERRORS:
+            raise
         except Exception as error:
             message = (
                 f"Link '{self.name}' could not read link field "
@@ -58,6 +60,8 @@ class Many2OneLink(Link):
                 period,
                 options=options,
             )
+        except _ENGINE_ERRORS:
+            raise
         except Exception as error:
             message = (
                 f"Link '{self.name}' could not calculate target variable "
@@ -118,6 +122,8 @@ class Many2OneLink(Link):
         """Read roles from the source population for the requested period."""
         try:
             return self._source_population(self.role_field, period)
+        except _ENGINE_ERRORS:
+            raise
         except Exception as error:
             message = (
                 f"Link '{self.name}' could not read role field "

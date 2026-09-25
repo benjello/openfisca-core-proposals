@@ -8,6 +8,7 @@ from openfisca_core import (
     taxbenefitsystems,
     variables,
 )
+from openfisca_core.errors import CycleError, SpiralError
 from openfisca_core.links import Many2OneLink
 from openfisca_core.links.link import LinkResolutionError
 from openfisca_core.populations import ADD, DIVIDE
@@ -144,3 +145,39 @@ def test_many2one_chaining_uses_each_links_resolver(simulation, monkeypatch):
 
     numpy.testing.assert_array_equal(link.mother("age", "2024"), [0, 0, 45])
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("error_type", [CycleError, SpiralError])
+def test_many2one_preserves_engine_errors(simulation, monkeypatch, error_type):
+    link = simulation.persons.mother
+
+    def fail(_period):
+        raise error_type("engine failure")
+
+    monkeypatch.setattr(link, "_get_target_ids", fail)
+
+    with pytest.raises(error_type, match="engine failure"):
+        link("age", "2024")
+
+
+def test_period_id_resolution_restores_population_after_error(simulation, monkeypatch):
+    population = simulation.persons
+    population.activate_dynamic_mode("2024-01", [10, 20, 30])
+    population.register_deaths("2024-02", [10])
+    latest_count = population.count
+    latest_mapping = population._id_to_rownum
+
+    def fail(_ids, _population):
+        raise RuntimeError("resolution failed")
+
+    monkeypatch.setattr(simulation.persons.mother, "_resolve_ids", fail)
+
+    with pytest.raises(RuntimeError, match="resolution failed"):
+        simulation.persons.mother._resolve_ids_for_period(
+            [10],
+            population,
+            "2024-01",
+        )
+
+    assert population.count == latest_count
+    assert population._id_to_rownum is latest_mapping
