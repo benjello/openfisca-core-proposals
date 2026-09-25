@@ -27,7 +27,15 @@ def build_simulation():
         entity = household
         definition_period = periods.DateUnit.MONTH
 
-    tax_benefit_system.add_variables(salary, rent)
+    class household_income(variables.Variable):
+        value_type = float
+        entity = household
+        definition_period = periods.DateUnit.MONTH
+
+        def formula(population, period):
+            return population.sum(population.members("salary", period))
+
+    tax_benefit_system.add_variables(salary, rent, household_income)
     simulation = SimulationBuilder.build_default_simulation(
         tax_benefit_system,
         count=3,
@@ -44,6 +52,8 @@ def test_membership_creates_groups_and_keeps_non_contiguous_groups_empty() -> No
     simulation.household.set_members_for_period("2024-02", [0, 2, 2])
 
     assert simulation.household.get_count_for_period("2024-03") == 3
+    assert simulation.household.count == 3
+    numpy.testing.assert_array_equal(simulation.household.ids, [0, 1, 2])
     numpy.testing.assert_array_equal(
         simulation.household.nb_persons(period="2024-03"),
         [1, 0, 2],
@@ -64,6 +74,8 @@ def test_membership_dissolves_groups_and_count_carries_forward() -> None:
 
     assert simulation.household.get_count_for_period("2024-03") == 3
     assert simulation.household.get_count_for_period("2024-05") == 1
+    assert simulation.household.count == 1
+    numpy.testing.assert_array_equal(simulation.household.ids, [0])
     numpy.testing.assert_array_equal(
         simulation.household.nb_persons(period="2024-05"),
         [3],
@@ -106,6 +118,7 @@ def test_all_persons_and_groups_can_disappear() -> None:
 def test_dump_restore_preserves_dynamic_group_counts(tmp_path) -> None:
     simulation, tax_benefit_system = build_simulation()
     simulation.household.set_members_for_period("2024-02", [0, 2, 2])
+    simulation.household.set_members_for_period("2024-04", [0, 0, 0])
     directory = tmp_path / "simulation"
 
     simulation_dumper.dump_simulation(simulation, str(directory))
@@ -115,10 +128,57 @@ def test_dump_restore_preserves_dynamic_group_counts(tmp_path) -> None:
     )
 
     assert restored.household.get_count_for_period("2024-03") == 3
+    assert restored.household.count == 1
+    numpy.testing.assert_array_equal(restored.household.ids, [0])
     numpy.testing.assert_array_equal(
         restored.household.nb_persons(period="2024-03"),
         [1, 0, 2],
     )
+
+
+def test_dump_restore_preserves_inputs_during_structure_invalidation(tmp_path) -> None:
+    simulation, tax_benefit_system = build_simulation()
+    simulation.household.set_members_for_period("2024-02", [0, 2, 2])
+    simulation.set_input("salary", "2024-02", [10, 20, 30])
+    numpy.testing.assert_array_equal(
+        simulation.calculate("household_income", "2024-02"),
+        [10, 0, 50],
+    )
+    directory = tmp_path / "simulation"
+    simulation_dumper.dump_simulation(simulation, str(directory))
+    restored = simulation_dumper.restore_simulation(
+        str(directory),
+        tax_benefit_system,
+    )
+
+    restored.household.set_members_for_period("2024-02", [0, 0, 2])
+
+    numpy.testing.assert_array_equal(
+        restored.calculate("household_income", "2024-02"),
+        [30, 0, 30],
+    )
+
+
+def test_sparse_group_ids_are_rejected_before_dense_allocation() -> None:
+    simulation, _ = build_simulation()
+
+    with pytest.raises(ValueError, match="too sparse"):
+        simulation.household.set_members_for_period(
+            "2024-02",
+            [0, 1_000_000_000, 1_000_000_000],
+        )
+
+
+def test_dynamic_groups_reject_non_dense_permanent_ids() -> None:
+    simulation, _ = build_simulation()
+    other = SimulationBuilder.build_default_simulation(
+        simulation.tax_benefit_system,
+        count=3,
+    )
+    other.household.set_members_entity_id([0, 0, 1])
+
+    with pytest.raises(ValueError, match="dense range"):
+        other.household.activate_dynamic_mode("2024-01", [10, 20])
 
 
 @pytest.mark.parametrize(

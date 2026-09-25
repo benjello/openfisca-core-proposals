@@ -39,6 +39,9 @@ class CorePopulation:
     #: A pseudo index for the members of the population.
     ids: Sequence[str] = []
 
+    _MAX_DENSE_ID_SPACE = 10_000
+    _MAX_ID_SPACE_PER_MEMBER = 1_000
+
     #: The :class:`~simulations.Simulation` for which the population is calculated.
     simulation: None | t.Simulation = None
 
@@ -561,7 +564,23 @@ class CorePopulation:
             raise ValueError("permanent_ids must contain non-negative IDs")
         if len(numpy.unique(ids)) != len(ids):
             raise ValueError("permanent_ids must not contain duplicates")
+        CorePopulation._validate_id_density(ids, "permanent_ids")
         return ids.astype(numpy.intp, copy=False)
+
+    @staticmethod
+    def _validate_id_density(ids, name) -> None:
+        if len(ids) == 0:
+            return
+        id_space = int(numpy.max(ids)) + 1
+        maximum = max(
+            CorePopulation._MAX_DENSE_ID_SPACE,
+            len(ids) * CorePopulation._MAX_ID_SPACE_PER_MEMBER,
+        )
+        if id_space > maximum:
+            raise ValueError(
+                f"{name} are too sparse: ID space {id_space} exceeds the "
+                f"reasonable limit {maximum} for {len(ids)} entries",
+            )
 
     @staticmethod
     def _build_id_to_rownum(permanent_ids):
