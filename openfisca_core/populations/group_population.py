@@ -172,6 +172,21 @@ class GroupPopulation(Population):
                 expected_count,
             )
 
+    def _check_group_array(self, array, period=None) -> None:
+        expected_count = (
+            self.get_count_for_period(period)
+            if period is not None and self._dynamic
+            else self.count
+        )
+        if array.size != expected_count:
+            from ._errors import InvalidArraySizeError
+
+            raise InvalidArraySizeError(array, self.entity.key, expected_count)
+
+    def activate_dynamic_mode(self, period, permanent_ids=None) -> None:
+        """Enable group-count snapshots; membership remains explicitly managed."""
+        super().activate_dynamic_mode(period, permanent_ids)
+
     def set_members_for_period(
         self,
         period,
@@ -180,14 +195,15 @@ class GroupPopulation(Population):
     ) -> None:
         """Set membership from ``period`` until the next explicit snapshot.
 
-        This first dynamic-membership API keeps both person and group counts
-        constant. Group creation and dissolution are handled by a later API.
+        In static mode, person and group counts remain fixed. In dynamic mode,
+        the membership length follows the period's person count and group count
+        becomes ``max(members_entity_id) + 1`` (or zero for no members).
         """
         snapshot_period = periods.period(period)
         array = numpy.asarray(members_entity_id)
         if array.ndim != 1:
             raise ValueError("members_entity_id must be a one-dimensional array")
-        if array.size == 0:
+        if array.size == 0 and not self._dynamic:
             raise ValueError("members_entity_id cannot be empty")
         expected_count = (
             self.members.get_count_for_period(snapshot_period)
@@ -199,25 +215,36 @@ class GroupPopulation(Population):
                 "members_entity_id must contain one entry per member "
                 f"(expected {expected_count}, got {len(array)})",
             )
-        if not numpy.issubdtype(array.dtype, numpy.integer):
+        if array.size and not numpy.issubdtype(array.dtype, numpy.integer):
             raise ValueError("members_entity_id must contain integer IDs")
-        if numpy.any(array < 0):
+        if array.size and numpy.any(array < 0):
             raise ValueError("members_entity_id must contain non-negative IDs")
-        if numpy.any(array >= self.count):
+        if not self._dynamic and numpy.any(array >= self.count):
             raise ValueError(
                 "members_entity_id must reference an existing group "
                 f"(valid IDs are 0 to {self.count - 1})",
             )
-        if int(numpy.max(array)) + 1 != self.count:
+        if not self._dynamic and int(numpy.max(array)) + 1 != self.count:
             raise ValueError(
                 "set_members_for_period cannot change the number of groups",
             )
 
-        role_snapshot = (
-            None
-            if members_role is None
-            else self._validate_members_role(members_role, array)
-        )
+        if members_role is None:
+            current_roles = self._get_members_role(snapshot_period)
+            if len(current_roles) == len(array):
+                role_snapshot = None
+            elif len(self.entity.flattened_roles) == 1 or array.size == 0:
+                role_snapshot = numpy.repeat(
+                    self.entity.flattened_roles[0],
+                    len(array),
+                )
+            else:
+                raise ValueError(
+                    "members_role is required when the person count changes "
+                    "for an entity with multiple roles",
+                )
+        else:
+            role_snapshot = self._validate_members_role(members_role, array)
         snapshot = array.astype(numpy.intp, copy=True)
         snapshot.flags.writeable = False
         self._members_entity_id_by_period[snapshot_period] = snapshot
@@ -226,6 +253,20 @@ class GroupPopulation(Population):
             self._members_role_by_period[snapshot_period] = role_snapshot
         self._members_position_by_period.pop(snapshot_period, None)
         self._ordered_members_map_by_period.pop(snapshot_period, None)
+
+        if self._dynamic:
+            group_count = int(numpy.max(snapshot)) + 1 if snapshot.size else 0
+            known_group_count = (
+                0 if self._permanent_ids is None else len(self._permanent_ids)
+            )
+            self._permanent_ids = numpy.arange(
+                max(group_count, known_group_count),
+                dtype=numpy.intp,
+            )
+            self._set_period_identity_snapshot(
+                snapshot_period,
+                numpy.arange(group_count, dtype=numpy.intp),
+            )
 
         next_starts = [
             item.start
@@ -292,10 +333,23 @@ class GroupPopulation(Population):
                 "members_entity_id must contain one entry per member "
                 f"(expected {expected_count}, got {len(new_membership)})",
             )
-        if not numpy.issubdtype(new_membership.dtype, numpy.integer):
+        if new_membership.size and not numpy.issubdtype(
+            new_membership.dtype,
+            numpy.integer,
+        ):
             raise ValueError("members_entity_id must contain integer IDs")
-        if numpy.any(new_membership < 0) or numpy.any(new_membership >= self.count):
+        if numpy.any(new_membership < 0) or (
+            not self._dynamic and numpy.any(new_membership >= self.count)
+        ):
             raise ValueError("members_entity_id contains an unknown group ID")
+
+        new_membership = new_membership.astype(numpy.intp, copy=False)
+        if self._dynamic:
+            group_count = (
+                int(numpy.max(new_membership)) + 1 if new_membership.size else 0
+            )
+        else:
+            group_count = self.count
 
         if previous_period is None:
             target_period = periods.period(period)
@@ -337,7 +391,7 @@ class GroupPopulation(Population):
         is_stayer = numpy.asarray(old_membership) == new_membership
         result_indices = numpy.full(len(new_membership), -1, dtype=numpy.intp)
         result_indices[is_stayer] = old_role_indices[is_stayer]
-        used = numpy.zeros((self.count, role_count), dtype=numpy.intp)
+        used = numpy.zeros((group_count, role_count), dtype=numpy.intp)
         numpy.add.at(
             used,
             (new_membership[is_stayer], old_role_indices[is_stayer]),
@@ -475,17 +529,22 @@ class GroupPopulation(Population):
         self.entity.check_role_validity(role)
         self._check_members_array(array, period)
         members_entity_id = self._get_members_entity_id(period)
+        group_count = (
+            self.get_count_for_period(period)
+            if period is not None and self._dynamic
+            else self.count
+        )
         if role is not None:
             role_filter = self._members_have_role(role, period)
             return numpy.bincount(
                 members_entity_id[role_filter],
                 weights=array[role_filter],
-                minlength=self.count,
+                minlength=group_count,
             )
         return numpy.bincount(
             members_entity_id,
             weights=array,
-            minlength=self.count,
+            minlength=group_count,
         )
 
     @projectors.projectable
@@ -517,9 +576,14 @@ class GroupPopulation(Population):
         )
         filtered_array = numpy.where(role_filter, array, neutral_element)
 
-        result = self.filled_array(
-            neutral_element,
-        )  # Neutral value that will be returned if no one with the given role exists.
+        group_count = (
+            self.get_count_for_period(period)
+            if period is not None and self._dynamic
+            else self.count
+        )
+        result = numpy.full(group_count, neutral_element)
+        if position_in_entity.size == 0:
+            return result
 
         # We loop over the positions in the entity
         # Looping over the entities is tempting, but potentially slow if there are a lot of entities
@@ -621,9 +685,14 @@ class GroupPopulation(Population):
         if role:
             role_condition = self._members_have_role(role, period)
             return self.sum(role_condition, period=period)
+        group_count = (
+            self.get_count_for_period(period)
+            if period is not None and self._dynamic
+            else self.count
+        )
         return numpy.bincount(
             self._get_members_entity_id(period),
-            minlength=self.count,
+            minlength=group_count,
         )
 
     # Projection person -> entity
@@ -646,7 +715,12 @@ class GroupPopulation(Population):
             )
         self._check_members_array(array, period)
         members_map = self._get_ordered_members_map(period)
-        result = self.filled_array(default, dtype=array.dtype)
+        group_count = (
+            self.get_count_for_period(period)
+            if period is not None and self._dynamic
+            else self.count
+        )
+        result = numpy.full(group_count, default, dtype=array.dtype)
         if isinstance(array, indexed_enums.EnumArray):
             result = indexed_enums.EnumArray(result, array.possible_values)
         role_filter = self._members_have_role(role, period)
@@ -670,7 +744,14 @@ class GroupPopulation(Population):
         positions = self._get_members_position(period)
         nb_persons_per_entity = self.nb_persons(period=period)
         members_map = self._get_ordered_members_map(period)
-        result = self.filled_array(default, dtype=array.dtype)
+        group_count = (
+            self.get_count_for_period(period)
+            if period is not None and self._dynamic
+            else self.count
+        )
+        result = numpy.full(group_count, default, dtype=array.dtype)
+        if positions.size == 0:
+            return result
         # For households that have at least n persons, set the result as the value of criteria for the person for which the position is n.
         # The map is needed b/c the order of the nth persons of each household in the persons vector is not necessarily the same than the household order.
         result[nb_persons_per_entity > n] = array[members_map][
@@ -689,7 +770,7 @@ class GroupPopulation(Population):
     # Projection entity -> person(s)
 
     def project(self, array, role=None, period=None):
-        self.check_array_compatible_with_entity(array)
+        self._check_group_array(array, period)
         self.entity.check_role_validity(role)
         members_entity_id = self._get_members_entity_id(period)
         if role is None:
