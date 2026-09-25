@@ -55,9 +55,7 @@ def test_sparse_storage_size():
     periods_count = 24
     holder = populated_holder(count, periods_count)
 
-    sparse_bytes = holder._as_of_base.nbytes + sum(
-        indices.nbytes + values.nbytes for _, indices, values in holder._as_of_patches
-    )
+    sparse_bytes = holder.get_memory_usage()["total_nb_bytes"]
     dense_bytes = count * numpy.dtype(numpy.int32).itemsize * (periods_count + 1)
 
     assert sparse_bytes < dense_bytes / 5
