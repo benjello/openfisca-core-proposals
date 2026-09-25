@@ -33,6 +33,8 @@ class Holder:
         self.simulation = population.simulation
         self._eternal = self.variable.definition_period == periods.DateUnit.ETERNITY
         self._memory_storage = storage.InMemoryStorage(is_eternal=self._eternal)
+        self._input_periods = set()
+        self._is_setting_input = False
 
         # By default, do not activate on-disk storage, or variable dropping
         self._disk_storage = None
@@ -69,6 +71,10 @@ class Holder:
                 os.path.join(new.simulation.data_storage_dir, self.variable.name),
             )
 
+        # ``_input_periods`` is mutable: copy it so that tracking the periods
+        # set as input on one simulation does not leak into its clone.
+        new_dict["_input_periods"] = set(self._input_periods)
+
         return new
 
     def create_disk_storage(self, directory=None, preserve=False):
@@ -91,6 +97,15 @@ class Holder:
         self._memory_storage.delete(period)
         if self._disk_storage:
             self._disk_storage.delete(period)
+        if period is None:
+            self._input_periods.clear()
+        else:
+            period = periods.period(period)
+            self._input_periods = {
+                known_period
+                for known_period in self._input_periods
+                if not period.contains(known_period)
+            }
 
     def get_array(self, period):
         """Get the value of the variable for the given period.
@@ -247,9 +262,13 @@ class Holder:
             return warnings.warn(warning_message, Warning, stacklevel=2)
         if self.variable.value_type in (float, int) and isinstance(array, str):
             array = commons.eval_expression(array)
-        if self.variable.set_input:
-            return self.variable.set_input(self, period, array)
-        return self._set(period, array)
+        self._is_setting_input = True
+        try:
+            if self.variable.set_input:
+                return self.variable.set_input(self, period, array)
+            return self._set(period, array)
+        finally:
+            self._is_setting_input = False
 
     def _to_array(self, value, period=None):
         if not isinstance(value, numpy.ndarray):
@@ -323,6 +342,8 @@ class Holder:
             self._disk_storage.put(value, period)
         else:
             self._memory_storage.put(value, period)
+        if self._is_setting_input:
+            self._input_periods.add(periods.period(period))
 
     def put_in_cache(self, value, period) -> None:
         if self._do_not_store:

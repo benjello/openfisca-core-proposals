@@ -27,9 +27,17 @@ def build_simulation():
         definition_period = periods.DateUnit.MONTH
 
         def formula(population, period):
-            return population.sum(population.members("salary", period), period=period)
+            return population.sum(population.members("salary", period))
 
-    tax_benefit_system.add_variables(salary, household_income)
+    class household_size(variables.Variable):
+        value_type = int
+        entity = person
+        definition_period = periods.DateUnit.MONTH
+
+        def formula(population, _period):
+            return population.household.nb_persons()
+
+    tax_benefit_system.add_variables(salary, household_income, household_size)
     simulation = SimulationBuilder().build_default_simulation(
         tax_benefit_system,
         count=4,
@@ -100,6 +108,26 @@ def test_membership_change_invalidates_inherited_cached_periods() -> None:
     )
 
 
+def test_membership_change_invalidates_other_population_results_not_inputs() -> None:
+    simulation = build_simulation()
+    simulation.set_input("salary", "2024-02", [10, 20, 30, 40])
+    numpy.testing.assert_array_equal(
+        simulation.calculate("household_size", "2024-02"),
+        [2, 2, 2, 2],
+    )
+
+    simulation.household.set_members_for_period("2024-02", [0, 0, 0, 1])
+
+    numpy.testing.assert_array_equal(
+        simulation.calculate("household_size", "2024-02"),
+        [3, 3, 3, 1],
+    )
+    numpy.testing.assert_array_equal(
+        simulation.calculate("salary", "2024-02"),
+        [10, 20, 30, 40],
+    )
+
+
 def test_dynamic_membership_is_preserved_and_isolated_by_clone() -> None:
     simulation = build_simulation()
     simulation.household.set_members_for_period("2024-02", [0, 1, 0, 1])
@@ -116,6 +144,17 @@ def test_dynamic_membership_is_preserved_and_isolated_by_clone() -> None:
         clone.household._get_members_entity_id("2024-03"),
         [0, 1, 1, 0],
     )
+
+
+def test_snapshot_periods_with_the_same_start_are_rejected() -> None:
+    simulation = build_simulation()
+    simulation.household.set_members_for_period("2024-01", [0, 1, 0, 1])
+
+    with pytest.raises(ValueError, match="same start"):
+        simulation.household.set_members_for_period(
+            "year:2024-01:1",
+            [0, 0, 1, 1],
+        )
 
 
 @pytest.mark.parametrize(
