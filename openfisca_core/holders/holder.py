@@ -192,9 +192,7 @@ class Holder:
                 self._as_of_base_source = None
                 self._as_of_patches = [patch for patch, _ in retained_patches]
                 self._as_of_patch_sources = [source for _, source in retained_patches]
-                self._as_of_patch_instants = [
-                    patch[0] for patch in self._as_of_patches
-                ]
+                self._as_of_patch_instants = [patch[0] for patch in self._as_of_patches]
                 self._as_of_snapshots.clear()
                 self._as_of_explicit_periods = {
                     known_period
