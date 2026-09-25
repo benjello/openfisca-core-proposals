@@ -651,6 +651,14 @@ def test_fully_specified_entities(tax_benefit_system) -> None:
     assert simulation.persons.count == 2
 
 
+def test_unknown_input_format(tax_benefit_system) -> None:
+    with pytest.raises(SituationParsingError, match="does not match any known format"):
+        SimulationBuilder().build_from_dict(
+            tax_benefit_system,
+            {"unknown_entity": {}},
+        )
+
+
 def test_single_entity_shortcut(tax_benefit_system) -> None:
     input_yaml = """
         persons:

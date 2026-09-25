@@ -146,12 +146,21 @@ class SimulationBuilder:
             params = self.explicit_singular_entities(tax_benefit_system, input_dict)
             return self.build_from_entities(tax_benefit_system, params)
 
-        if are_entities_fully_specified(params := input_dict, plural):
-            return self.build_from_entities(tax_benefit_system, params)
+        if are_entities_fully_specified(input_dict, plural):
+            return self.build_from_entities(tax_benefit_system, input_dict)
 
-        if not are_entities_specified(params := input_dict, variables):
-            return self.build_from_variables(tax_benefit_system, params)
-        return None
+        if not are_entities_specified(input_dict, variables):
+            return self.build_from_variables(tax_benefit_system, input_dict)
+
+        raise errors.SituationParsingError(
+            ["input"],
+            "Test input does not match any known format. "
+            f"Input keys: {list(input_dict)}. "
+            "This may mean the wrong country package is in use: expected entity keys "
+            f"singular in {set(singular)} or plural in {set(plural)}. "
+            "Use the -c / --country-package option if you have several OpenFisca "
+            "packages installed.",
+        )
 
     def build_from_entities(
         self,
