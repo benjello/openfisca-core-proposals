@@ -469,12 +469,13 @@ class CorePopulation:
         permanent_ids=None,
     ) -> None:
         """Enable period identity snapshots from an initial population state."""
+        snapshot_period = self._validate_snapshot_period(period, self._period_index)
         if permanent_ids is None:
             permanent_ids = numpy.arange(self.count, dtype=numpy.intp)
         permanent_ids = self._validate_permanent_ids(permanent_ids, self.count)
         self._dynamic = True
         self._permanent_ids = permanent_ids.copy()
-        self._set_period_identity_snapshot(period, permanent_ids)
+        self._set_period_identity_snapshot(snapshot_period, permanent_ids)
 
     def register_births(self, period: t.PeriodLike, permanent_ids) -> None:
         """Register explicit new permanent IDs as alive from ``period``.
@@ -483,6 +484,7 @@ class CorePopulation:
         population's :meth:`set_members_for_period` explicitly afterwards.
         """
         self._check_person_lifecycle()
+        snapshot_period = self._validate_snapshot_period(period, self._period_index)
         new_ids = self._validate_lifecycle_ids(permanent_ids, "birth")
         known_ids = (
             numpy.array([], dtype=numpy.intp)
@@ -495,7 +497,6 @@ class CorePopulation:
                 f"Cannot register already known permanent IDs: {already_known.tolist()}",
             )
 
-        snapshot_period = periods.period(period)
         alive_ids = self._get_alive_ids_for_period(snapshot_period)
         self._permanent_ids = numpy.sort(numpy.concatenate((known_ids, new_ids)))
         self._set_period_identity_snapshot(
@@ -507,6 +508,7 @@ class CorePopulation:
     def register_deaths(self, period: t.PeriodLike, permanent_ids) -> None:
         """Register explicit permanent IDs as absent from ``period`` onward."""
         self._check_person_lifecycle()
+        snapshot_period = self._validate_snapshot_period(period, self._period_index)
         dead_ids = self._validate_lifecycle_ids(permanent_ids, "death")
         known_ids = (
             numpy.array([], dtype=numpy.intp)
@@ -517,7 +519,6 @@ class CorePopulation:
         if unknown_ids.size:
             raise ValueError(f"Unknown permanent IDs: {unknown_ids.tolist()}")
 
-        snapshot_period = periods.period(period)
         alive_ids = self._get_alive_ids_for_period(snapshot_period)
         not_alive = numpy.setdiff1d(dead_ids, alive_ids)
         if not_alive.size:
@@ -585,11 +586,12 @@ class CorePopulation:
 
     def snapshot_period(self, period: t.PeriodLike) -> None:
         """Snapshot the current row ordering for ``period``."""
+        snapshot_period = self._validate_snapshot_period(period, self._period_index)
         if self._id_to_rownum is None:
             permanent_ids = numpy.arange(self.count, dtype=numpy.intp)
         else:
             permanent_ids = self._ids_by_row(self._id_to_rownum)
-        self._set_period_identity_snapshot(period, permanent_ids)
+        self._set_period_identity_snapshot(snapshot_period, permanent_ids)
 
     @staticmethod
     def _ids_by_row(id_to_rownum):
@@ -631,6 +633,13 @@ class CorePopulation:
                 f"Snapshot period {snapshot_period} has the same start as "
                 f"existing snapshot period {collision}; use one canonical period",
             )
+        if snapshots:
+            latest_period = max(snapshots, key=lambda item: item.start)
+            if snapshot_period.start < latest_period.start:
+                raise ValueError(
+                    f"Snapshot period {snapshot_period} is before latest snapshot "
+                    f"period {latest_period}; events must be registered in order",
+                )
         return snapshot_period
 
     def get_period_id_to_rownum(self, period):
