@@ -127,6 +127,45 @@ def test_implicit_links_follow_period_membership(simulation):
     )
 
 
+def test_implicit_one2many_role_uses_period_roles(simulation):
+    adult = simulation.household.entity.ADULT
+    child = simulation.household.entity.CHILD
+    simulation.household.set_members_for_period(
+        "2025",
+        [0, 1, 1],
+        members_role=[child, adult, child],
+    )
+
+    numpy.testing.assert_array_equal(
+        simulation.household.persons.count("2024", role=child),
+        [1, 0],
+    )
+    numpy.testing.assert_array_equal(
+        simulation.household.persons.count("2025", role=child),
+        [1, 1],
+    )
+
+
+def test_implicit_many2one_rank_uses_period_membership(simulation):
+    adult = simulation.household.entity.ADULT
+    child = simulation.household.entity.CHILD
+    simulation.household.set_members_for_period(
+        "2025",
+        [0, 1, 1],
+        members_role=[adult, adult, child],
+    )
+    simulation.set_input("salary", "2025", [30, 10, 20])
+
+    numpy.testing.assert_array_equal(
+        simulation.persons.household.rank("salary", "2024"),
+        [0, 1, 0],
+    )
+    numpy.testing.assert_array_equal(
+        simulation.persons.household.rank("salary", "2025"),
+        [0, 0, 1],
+    )
+
+
 def test_implicit_links_without_period_keep_static_membership(simulation):
     simulation.household.set_members_for_period("2025", [0, 1, 1])
     salaries = simulation.persons("salary", "2024")

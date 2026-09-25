@@ -25,8 +25,15 @@ class Many2OneLink(Link):
             message = f"Link '{self.name}' is not bound to a simulation"
             raise LinkResolutionError(message)
 
+        projection_period = period
+        if isinstance(options, Sequence) and population_types.Option.ADD in options:
+            variable = self._target_population.entity.get_variable(variable_name)
+            projection_period = periods.period(period).get_subperiods(
+                variable.definition_period,
+            )[-1]
+
         try:
-            target_ids = self._get_target_ids(period)
+            target_ids = self._get_target_ids(projection_period)
         except Exception as error:
             message = (
                 f"Link '{self.name}' could not read link field "
@@ -62,7 +69,7 @@ class Many2OneLink(Link):
             target_values,
             target_ids,
             self._default_value(variable_name),
-            period,
+            projection_period,
         )
 
     def _project_values(
@@ -173,7 +180,12 @@ class Many2OneLink(Link):
             )
             raise ValueError(message)
         criteria = self._source_population.simulation.calculate(variable_name, period)
-        return self._source_population.get_rank(target, criteria, condition=condition)
+        return self._source_population.get_rank(
+            target,
+            criteria,
+            condition=condition,
+            period=period,
+        )
 
 
 class _ChainedLink:

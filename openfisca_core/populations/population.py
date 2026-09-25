@@ -99,6 +99,7 @@ class Population(CorePopulation):
         entity: Population,
         criteria: t.FloatArray,
         condition: bool = True,
+        period: t.PeriodLike | None = None,
     ) -> t.IntArray:
         """Get the rank of a person within an entity according to a criteria.
         The person with rank 0 has the minimum value of criteria.
@@ -129,28 +130,46 @@ class Population(CorePopulation):
             message = f"get_rank requires a group population; got '{key}'"
             raise ValueError(message)
 
-        positions = entity.members_position
-        if len(positions) != self.count or len(entity.members_entity_id) != self.count:
+        period = entity._resolve_period(period)
+        positions = entity._get_members_position(period)
+        members_entity_id = entity._get_members_entity_id(period)
+        member_count = (
+            self.get_count_for_period(period)
+            if period is not None and self._dynamic
+            else self.count
+        )
+        if len(positions) != member_count or len(members_entity_id) != member_count:
             message = (
                 f"Group population '{entity.entity.key}' has inconsistent membership "
-                f"for {self.count} members"
+                f"for {member_count} members"
             )
             raise ValueError(message)
-        if numpy.any(entity.members_entity_id < 0) or numpy.any(
-            entity.members_entity_id >= entity.count
+        entity_count = (
+            entity.get_count_for_period(period)
+            if period is not None and entity._dynamic
+            else entity.count
+        )
+        if numpy.any(members_entity_id < 0) or numpy.any(
+            members_entity_id >= entity_count
         ):
             message = (
                 f"Group population '{entity.entity.key}' contains invalid entity rows"
             )
             raise ValueError(message)
+        if positions.size == 0:
+            return numpy.array([], dtype=numpy.intp)
         biggest_entity_size = numpy.max(positions) + 1
         filtered_criteria = numpy.where(condition, criteria, numpy.inf)
-        ids = entity.members_entity_id
 
         # Matrix: the value in line i and column j is the value of criteria for the jth person of the ith entity
         matrix = numpy.asarray(
             [
-                entity.value_nth_person(k, filtered_criteria, default=numpy.inf)
+                entity.value_nth_person(
+                    k,
+                    filtered_criteria,
+                    default=numpy.inf,
+                    period=period,
+                )
                 for k in range(biggest_entity_size)
             ],
         ).transpose()
@@ -161,7 +180,7 @@ class Population(CorePopulation):
         sorted_matrix = numpy.argsort(numpy.argsort(matrix))
 
         # Build the result vector by taking for each person the value in the right line (corresponding to its household id) and the right column (corresponding to its position)
-        result = sorted_matrix[ids, positions]
+        result = sorted_matrix[members_entity_id, positions]
 
         # Return -1 for the persons who don't respect the condition
         return numpy.where(condition, result, -1)

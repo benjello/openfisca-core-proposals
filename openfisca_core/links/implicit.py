@@ -128,7 +128,10 @@ class ImplicitOne2ManyLink(One2ManyLink):
     def _filter(self, source_rows, role, condition, period) -> numpy.ndarray:
         valid = source_rows >= 0
         if role is not None:
-            valid &= _role_matches(self._source_population.members_role, role)
+            valid &= _role_matches(
+                self._source_population._get_members_role(period),
+                role,
+            )
         if condition is not None:
             condition = numpy.asarray(condition, dtype=bool)
             if condition.shape != source_rows.shape:

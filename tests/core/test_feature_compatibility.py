@@ -1,7 +1,7 @@
 import numpy
 import pytest
 
-from openfisca_core import entities, periods, taxbenefitsystems, variables
+from openfisca_core import entities, periods, populations, taxbenefitsystems, variables
 from openfisca_core.links import Many2OneLink
 from openfisca_core.simulations import SimulationBuilder
 from openfisca_core.tools import simulation_dumper
@@ -270,4 +270,40 @@ def test_retroactive_birth_preserves_future_sparse_input() -> None:
     numpy.testing.assert_array_equal(
         simulation.calculate("state", "2024-04"),
         [1, 9, 3],
+    )
+
+
+def test_link_add_uses_last_subperiod_identity_space() -> None:
+    person = entities.SingleEntity("person", "persons", "", "")
+    person.add_link(Many2OneLink("parent", "parent_id", "person"))
+    tax_benefit_system = taxbenefitsystems.TaxBenefitSystem([person])
+
+    class score(variables.Variable):
+        value_type = int
+        entity = person
+        definition_period = periods.MONTH
+
+    class parent_id(variables.Variable):
+        value_type = int
+        entity = person
+        definition_period = periods.MONTH
+        default_value = -1
+        as_of = True
+
+    tax_benefit_system.add_variables(score, parent_id)
+    simulation = SimulationBuilder.build_default_simulation(
+        tax_benefit_system,
+        count=2,
+    )
+    simulation.persons.activate_dynamic_mode("2024-01", [10, 20])
+    simulation.set_input("score", "2024-01", [10, 2])
+    simulation.set_input("parent_id", "2024-01", [-1, 10])
+    simulation.persons.register_deaths("2024-02", [10])
+    simulation.persons.register_births("2024-03", [30])
+    simulation.set_input("score", "2024-12", [2, 3])
+    simulation.set_input("parent_id", "2024-12", [30, -1])
+
+    numpy.testing.assert_array_equal(
+        simulation.persons.parent("score", "2024", options=[populations.ADD]),
+        [3, 0],
     )
