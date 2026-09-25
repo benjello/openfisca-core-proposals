@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from typing import NoReturn
 
 import dpath
@@ -312,20 +312,23 @@ class SimulationBuilder:
     def build_default_simulation(
         tax_benefit_system: TaxBenefitSystem,
         count: int = 1,
+        group_members: Mapping[str, Array] | None = None,
     ) -> Simulation:
         """Build a default simulation.
 
         Where:
             - There are ``count`` persons
-            - There are ``count`` of each group entity, containing one person
+            - By default, there are ``count`` of each group entity, containing one
+              person. ``group_members`` can define another membership structure.
             - Every person has, in each entity, the first role
 
         """
         return (
-            _BuildDefaultSimulation(tax_benefit_system, count)
+            _BuildDefaultSimulation(tax_benefit_system, count, group_members)
             .add_count()
             .add_ids()
             .add_members_entity_id()
+            .add_id_to_rownum()
             .simulation
         )
 
