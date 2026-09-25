@@ -175,10 +175,22 @@ class Variable:
         )
 
         self.as_of = self.set(attr, "as_of", setter=self.set_as_of)
+        self.snapshot_count = self.set(
+            attr,
+            "snapshot_count",
+            allowed_type=int,
+            default=3,
+        )
         if self.as_of and self.set_input:
             msg = (
                 f'Variable "{self.name}" declares both as_of and set_input, '
                 "which are incompatible."
+            )
+            raise ValueError(msg)
+        if self.snapshot_count < 1:
+            msg = (
+                f"Invalid value '{self.snapshot_count}' for attribute "
+                f"'snapshot_count' in variable '{self.name}'. Must be positive."
             )
             raise ValueError(msg)
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import bisect
 import os
 import warnings
+from collections import OrderedDict
 from collections.abc import Sequence
 from typing import Any
 
@@ -40,6 +41,8 @@ class Holder:
             self._as_of_base_instant = None
             self._as_of_patches = []
             self._as_of_patch_instants = []
+            self._as_of_snapshots = OrderedDict()
+            self._as_of_max_snapshots = self.variable.snapshot_count
 
         # By default, do not activate on-disk storage, or variable dropping
         self._disk_storage = None
@@ -67,6 +70,7 @@ class Holder:
         if self._as_of:
             new_dict["_as_of_patches"] = list(self._as_of_patches)
             new_dict["_as_of_patch_instants"] = list(self._as_of_patch_instants)
+            new_dict["_as_of_snapshots"] = OrderedDict()
 
         new_dict["population"] = population
         new_dict["simulation"] = population.simulation
@@ -119,14 +123,44 @@ class Holder:
             return None
 
         patch_count = bisect.bisect_right(self._as_of_patch_instants, target)
-        if patch_count == 0:
-            return self._as_of_base
+        cached = self._as_of_snapshots.get(target)
+        if cached is not None:
+            return cached[0]
 
-        result = self._as_of_base.copy()
-        for _, indices, values in self._as_of_patches[:patch_count]:
+        best_instant = None
+        best_array = self._as_of_base
+        first_patch = 0
+        for snapshot_instant, (
+            snapshot,
+            snapshot_patch_count,
+        ) in self._as_of_snapshots.items():
+            if snapshot_instant < target and (
+                best_instant is None or snapshot_instant > best_instant
+            ):
+                best_instant = snapshot_instant
+                best_array = snapshot
+                first_patch = snapshot_patch_count
+
+        result = best_array
+        for _, indices, values in self._as_of_patches[first_patch:patch_count]:
+            if result is best_array:
+                result = result.copy()
             result[indices] = values
-        result.flags.writeable = False
+        if result is not best_array:
+            result.flags.writeable = False
+        self._cache_as_of_snapshot(target, result, patch_count)
         return result
+
+    def _cache_as_of_snapshot(self, instant, array, patch_count) -> None:
+        self._as_of_snapshots[instant] = (array, patch_count)
+        if len(self._as_of_snapshots) > self._as_of_max_snapshots:
+            self._as_of_snapshots.popitem(last=False)
+
+    def _invalidate_as_of_snapshots_from(self, instant) -> None:
+        for cached_instant in [
+            cached for cached in self._as_of_snapshots if cached >= instant
+        ]:
+            del self._as_of_snapshots[cached_instant]
 
     @staticmethod
     def _immutable_array(value):
@@ -138,6 +172,7 @@ class Holder:
         indices = self._immutable_array(indices.astype(numpy.int32, copy=False))
         values = self._immutable_array(values)
         position = bisect.bisect_right(self._as_of_patch_instants, instant)
+        self._invalidate_as_of_snapshots_from(instant)
         self._as_of_patch_instants.insert(position, instant)
         self._as_of_patches.insert(position, (instant, indices, values))
 
@@ -146,6 +181,7 @@ class Holder:
         if self._as_of_base is None:
             self._as_of_base = self._immutable_array(value)
             self._as_of_base_instant = instant
+            self._cache_as_of_snapshot(instant, self._as_of_base, 0)
             return
 
         if instant < self._as_of_base_instant:
@@ -159,11 +195,14 @@ class Holder:
                 indices,
                 previous_base,
             )
+            self._cache_as_of_snapshot(instant, self._as_of_base, 0)
             return
 
         # A dense input replaces the entire state, including unchanged entries.
         indices = numpy.arange(len(value))
         self._insert_as_of_patch(instant, indices, value)
+        patch_count = bisect.bisect_right(self._as_of_patch_instants, instant)
+        self._cache_as_of_snapshot(instant, self._immutable_array(value), patch_count)
 
     def get_memory_usage(self) -> t.MemoryUsage:
         """Get data about the virtual memory usage of the Holder.
