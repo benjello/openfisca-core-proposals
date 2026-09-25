@@ -128,6 +128,31 @@ def test_membership_change_invalidates_other_population_results_not_inputs() -> 
     )
 
 
+def test_membership_change_invalidates_annual_caches_across_populations() -> None:
+    simulation = build_simulation()
+    annual_period = periods.period("2024")
+    household_holder = simulation.household.get_holder("household_income")
+    person_holder = simulation.persons.get_holder("household_size")
+    household_holder._memory_storage.put(numpy.array([30, 70]), annual_period)
+    person_holder._memory_storage.put(numpy.array([2, 2, 2, 2]), annual_period)
+
+    simulation.household.set_members_for_period("2024-02", [0, 1, 0, 1])
+
+    assert household_holder.get_array(annual_period) is None
+    assert person_holder.get_array(annual_period) is None
+
+
+def test_top_level_projector_uses_explicit_membership_period() -> None:
+    simulation = build_simulation()
+    simulation.household.set_members_for_period("2024-02", [0, 1, 0, 1])
+    simulation.set_input("household_income", "2024-02", [100, 200])
+
+    numpy.testing.assert_array_equal(
+        simulation.persons.household("household_income", "2024-02"),
+        [100, 200, 100, 200],
+    )
+
+
 def test_dynamic_membership_is_preserved_and_isolated_by_clone() -> None:
     simulation = build_simulation()
     simulation.household.set_members_for_period("2024-02", [0, 1, 0, 1])
