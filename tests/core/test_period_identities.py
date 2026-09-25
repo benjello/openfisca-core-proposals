@@ -59,6 +59,14 @@ def test_clone_keeps_independent_identity_indexes() -> None:
     assert clone.persons.get_period_id_to_rownum("2024-02")[10] == 1
 
 
+def test_identity_snapshot_periods_with_the_same_start_are_rejected() -> None:
+    simulation, _ = build_simulation()
+    simulation.persons.activate_dynamic_mode("2024-01", [10, 20])
+
+    with pytest.raises(ValueError, match="same start"):
+        simulation.persons.snapshot_period("year:2024-01:1")
+
+
 def test_dump_restore_preserves_identity_snapshots(tmp_path) -> None:
     simulation, tax_benefit_system = build_simulation()
     simulation.persons.activate_dynamic_mode("2024-01", [10, 20])
