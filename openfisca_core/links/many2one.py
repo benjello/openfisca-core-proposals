@@ -20,7 +20,7 @@ class Many2OneLink(Link):
 
         simulation = self._source_population.simulation
         try:
-            target_ids = simulation.calculate(self.link_field, period)
+            target_ids = self._get_target_ids(period)
         except Exception as error:
             message = (
                 f"Link '{self.name}' could not read link field "
@@ -53,6 +53,10 @@ class Many2OneLink(Link):
         if isinstance(target_values, indexed_enums.EnumArray):
             return indexed_enums.EnumArray(result, target_values.possible_values)
         return result
+
+    def _get_target_ids(self, period) -> numpy.ndarray:
+        """Read target IDs from the source population's link field."""
+        return self._source_population.simulation.calculate(self.link_field, period)
 
     def __call__(self, variable_name: str, period) -> numpy.ndarray:
         return self.get(variable_name, period)
