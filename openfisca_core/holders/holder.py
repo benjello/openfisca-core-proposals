@@ -466,7 +466,7 @@ class Holder:
             self._as_of_base_instant = instant
             self._as_of_base_source = source
             if previous_base_source == "explicit_dense":
-                indices = numpy.arange(self.population.count)
+                indices = numpy.arange(len(previous_base))
                 self._insert_as_of_patch(
                     previous_base_instant,
                     indices,
@@ -490,7 +490,7 @@ class Holder:
         changed = value != previous
         if source == "explicit_dense" or changed.any():
             indices = (
-                numpy.arange(self.population.count)
+                numpy.arange(len(value))
                 if source == "explicit_dense"
                 else numpy.flatnonzero(changed)
             )
