@@ -8,7 +8,6 @@ from openfisca_core.periods import DateUnit, period
 from openfisca_core.populations import Population
 from openfisca_core.variables import Variable
 
-
 entity = Entity("person", "persons", "", "")
 
 
