@@ -40,6 +40,14 @@ class GroupPopulation(Population):
             self._members_entity_id_by_period,
         )
         result._members_role_by_period = dict(self._members_role_by_period)
+        result._dynamic = self._dynamic
+        result._permanent_ids = (
+            None if self._permanent_ids is None else self._permanent_ids.copy()
+        )
+        result._id_to_rownum = self._id_to_rownum
+        result._period_index = {
+            period: dict(snapshot) for period, snapshot in self._period_index.items()
+        }
         return result
 
     @staticmethod

@@ -4,6 +4,7 @@ import numpy
 
 from openfisca_core.data_storage import OnDiskStorage
 from openfisca_core.indexed_enums import Enum
+from openfisca_core import periods
 from openfisca_core.periods import DateUnit
 from openfisca_core.simulations import Simulation
 
@@ -72,6 +73,32 @@ def _dump_entity(population, directory) -> None:
     os.mkdir(path)
     numpy.save(os.path.join(path, "id.npy"), population.ids)
 
+    if population._period_index:
+        snapshot_periods = sorted(
+            population._period_index,
+            key=lambda period: period.start,
+        )
+        numpy.save(
+            os.path.join(path, "identity_periods.npy"),
+            numpy.asarray([str(period) for period in snapshot_periods]),
+        )
+        numpy.save(
+            os.path.join(path, "identity_counts.npy"),
+            numpy.asarray(
+                [
+                    population._period_index[period]["count"]
+                    for period in snapshot_periods
+                ],
+                dtype=numpy.intp,
+            ),
+        )
+        for index, period in enumerate(snapshot_periods):
+            numpy.save(
+                os.path.join(path, f"id_to_rownum_{index}.npy"),
+                population._period_index[period]["id_to_rownum"],
+            )
+        numpy.save(os.path.join(path, "permanent_ids.npy"), population._permanent_ids)
+
     if population.entity.is_person:
         return
 
@@ -91,11 +118,67 @@ def _dump_entity(population, directory) -> None:
         )
     numpy.save(os.path.join(path, "members_role.npy"), encoded_roles)
 
+    membership_periods = sorted(
+        population._members_entity_id_by_period,
+        key=lambda period: period.start,
+    )
+    if membership_periods:
+        numpy.save(
+            os.path.join(path, "membership_periods.npy"),
+            numpy.asarray([str(period) for period in membership_periods]),
+        )
+        for index, snapshot_period in enumerate(membership_periods):
+            numpy.save(
+                os.path.join(path, f"members_entity_id_{index}.npy"),
+                population._members_entity_id_by_period[snapshot_period],
+            )
+
+    role_periods = sorted(
+        population._members_role_by_period,
+        key=lambda period: period.start,
+    )
+    if role_periods:
+        numpy.save(
+            os.path.join(path, "role_periods.npy"),
+            numpy.asarray([str(period) for period in role_periods]),
+        )
+        for index, snapshot_period in enumerate(role_periods):
+            role_snapshot = population._members_role_by_period[snapshot_period]
+            encoded_snapshot = numpy.select(
+                [role_snapshot == role for role in flattened_roles],
+                [role.key for role in flattened_roles],
+                default="",
+            )
+            numpy.save(
+                os.path.join(path, f"members_role_{index}.npy"),
+                encoded_snapshot,
+            )
+
 
 def _restore_entity(population, directory):
     path = os.path.join(directory, population.entity.key)
 
     population.ids = numpy.load(os.path.join(path, "id.npy"))
+
+    identity_periods_path = os.path.join(path, "identity_periods.npy")
+    if os.path.exists(identity_periods_path):
+        snapshot_periods = numpy.load(identity_periods_path)
+        snapshot_counts = numpy.load(os.path.join(path, "identity_counts.npy"))
+        population._dynamic = True
+        population._permanent_ids = numpy.load(
+            os.path.join(path, "permanent_ids.npy"),
+        )
+        for index, (snapshot_period, count) in enumerate(
+            zip(snapshot_periods, snapshot_counts),
+        ):
+            mapping = numpy.load(os.path.join(path, f"id_to_rownum_{index}.npy"))
+            mapping.flags.writeable = False
+            population._period_index[periods.period(str(snapshot_period))] = {
+                "count": int(count),
+                "id_to_rownum": mapping,
+            }
+        latest = max(population._period_index, key=lambda period: period.start)
+        population._id_to_rownum = population._period_index[latest]["id_to_rownum"]
 
     if population.entity.is_person:
         return None
@@ -115,6 +198,35 @@ def _restore_entity(population, directory):
             list(flattened_roles),
             default=None,
         )
+
+    membership_periods_path = os.path.join(path, "membership_periods.npy")
+    if os.path.exists(membership_periods_path):
+        for index, snapshot_period in enumerate(
+            numpy.load(membership_periods_path),
+        ):
+            membership = numpy.load(
+                os.path.join(path, f"members_entity_id_{index}.npy"),
+            )
+            membership.flags.writeable = False
+            population._members_entity_id_by_period[
+                periods.period(str(snapshot_period))
+            ] = membership
+
+    role_periods_path = os.path.join(path, "role_periods.npy")
+    if os.path.exists(role_periods_path):
+        for index, snapshot_period in enumerate(numpy.load(role_periods_path)):
+            encoded_snapshot = numpy.load(
+                os.path.join(path, f"members_role_{index}.npy"),
+            )
+            role_snapshot = numpy.select(
+                [encoded_snapshot == role.key for role in flattened_roles],
+                list(flattened_roles),
+                default=None,
+            )
+            role_snapshot.flags.writeable = False
+            population._members_role_by_period[periods.period(str(snapshot_period))] = (
+                role_snapshot
+            )
     person_count = len(population.members_entity_id)
     population.count = max(population.members_entity_id) + 1
     return person_count
