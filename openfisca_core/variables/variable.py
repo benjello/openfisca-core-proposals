@@ -187,6 +187,12 @@ class Variable:
                 "which are incompatible."
             )
             raise ValueError(msg)
+        if self.as_of and self.definition_period == DateUnit.ETERNITY:
+            msg = (
+                f'Variable "{self.name}" declares as_of with an ETERNITY '
+                "definition_period, which has no temporal transition semantics."
+            )
+            raise ValueError(msg)
         if self.snapshot_count < 1:
             msg = (
                 f"Invalid value '{self.snapshot_count}' for attribute "
