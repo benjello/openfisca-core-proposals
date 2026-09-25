@@ -268,6 +268,23 @@ def test_initial_formula_cycle_is_rejected_and_clears_stack():
     assert simulation.tracer.stack == []
 
 
+def test_initial_formula_backward_recursion_without_base_is_rejected():
+    class State(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+        def initial_formula(person, period):  # noqa: N805
+            return person("State", period.last_month)
+
+    simulation = make_simulation(State)
+
+    with pytest.raises(CycleError, match="initial formula.*without an existing state"):
+        simulation.calculate("State", "2024-01")
+    assert simulation.tracer.stack == []
+
+
 def test_initial_formula_calculation_clears_final_stack():
     class State(Variable):
         value_type = int
