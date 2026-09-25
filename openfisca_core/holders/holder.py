@@ -43,6 +43,7 @@ class Holder:
             self._as_of_patch_instants = []
             self._as_of_snapshots = OrderedDict()
             self._as_of_max_snapshots = self.variable.snapshot_count
+            self._as_of_transition_computed = set()
 
         # By default, do not activate on-disk storage, or variable dropping
         self._disk_storage = None
@@ -71,6 +72,9 @@ class Holder:
             new_dict["_as_of_patches"] = list(self._as_of_patches)
             new_dict["_as_of_patch_instants"] = list(self._as_of_patch_instants)
             new_dict["_as_of_snapshots"] = OrderedDict()
+            new_dict["_as_of_transition_computed"] = set(
+                self._as_of_transition_computed,
+            )
 
         new_dict["population"] = population
         new_dict["simulation"] = population.simulation
@@ -115,8 +119,10 @@ class Holder:
         return None
 
     def _get_as_of(self, period):
-        target = period.start if self._as_of == "start" else period.stop
-        return self._reconstruct_as_of(target)
+        return self._reconstruct_as_of(self._as_of_reference_instant(period))
+
+    def _as_of_reference_instant(self, period):
+        return period.start if self._as_of == "start" else period.stop
 
     def _reconstruct_as_of(self, target):
         if self._as_of_base is None or target < self._as_of_base_instant:
@@ -178,6 +184,7 @@ class Holder:
 
     def _set_as_of(self, period, value) -> None:
         instant = period.start
+        self._as_of_transition_computed.add(self._as_of_reference_instant(period))
         if self._as_of_base is None:
             self._as_of_base = self._immutable_array(value)
             self._as_of_base_instant = instant
@@ -270,6 +277,7 @@ class Holder:
         changed = values != previous[indices]
         if changed.any():
             self._insert_as_of_patch(period.start, indices[changed], values[changed])
+        self._as_of_transition_computed.add(self._as_of_reference_instant(period))
 
     def get_memory_usage(self) -> t.MemoryUsage:
         """Get data about the virtual memory usage of the Holder.
