@@ -89,7 +89,18 @@ class Many2OneLink(Link):
 
     def _get_target_ids(self, period) -> numpy.ndarray:
         """Read target IDs from the source population's link field."""
-        return self._source_population.simulation.calculate(self.link_field, period)
+        return self._source_population(self.link_field, period)
+
+    def _get_roles(self, period) -> numpy.ndarray:
+        """Read roles from the source population for the requested period."""
+        try:
+            return self._source_population(self.role_field, period)
+        except Exception as error:
+            message = (
+                f"Link '{self.name}' could not read role field "
+                f"'{self.role_field}': {error}"
+            )
+            raise LinkResolutionError(message) from error
 
     def __call__(self, variable_name: str, period, *, options=None) -> numpy.ndarray:
         return self.get(variable_name, period, options=options)
@@ -110,17 +121,14 @@ class Many2OneLink(Link):
         """Return source roles for this link, when configured."""
         if self.role_field is None:
             return None
-        return self._source_population.simulation.calculate(
-            self.role_field,
-            periods.ETERNITY,
-        )
+        return self._get_roles(periods.ETERNITY)
 
-    def has_role(self, role_value) -> numpy.ndarray:
+    def has_role(self, role_value, period=periods.ETERNITY) -> numpy.ndarray:
         """Return which source rows have the requested role."""
-        roles = self.role
-        if roles is None:
+        if self.role_field is None:
             message = f"Link '{self.name}' has no role_field"
             raise ValueError(message)
+        roles = self._get_roles(period)
         return _role_matches(roles, role_value)
 
     def get_by_role(self, variable_name: str, period, *, role_value) -> numpy.ndarray:
@@ -133,7 +141,7 @@ class Many2OneLink(Link):
         if isinstance(default, indexed_enums.Enum):
             default = default.index
         filtered = result.copy()
-        filtered[~self.has_role(role_value)] = default
+        filtered[~self.has_role(role_value, period)] = default
         return filtered
 
     def rank(self, variable_name: str, period, *, condition=True) -> numpy.ndarray:

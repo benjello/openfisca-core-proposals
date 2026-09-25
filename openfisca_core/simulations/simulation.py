@@ -652,6 +652,8 @@ class Simulation:
                 population,
             )  # create shortcut simulation.household (for instance)
 
+        new._resolve_links()
+
         new.debug = debug
         new.trace = trace
 

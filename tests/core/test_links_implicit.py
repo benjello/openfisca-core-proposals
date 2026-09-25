@@ -3,6 +3,7 @@ import pytest
 from types import SimpleNamespace
 
 from openfisca_core import entities, periods, taxbenefitsystems, variables
+from openfisca_core.links import Many2OneLink
 from openfisca_core.links.implicit import ImplicitMany2OneLink, ImplicitOne2ManyLink
 from openfisca_core.simulations import SimulationBuilder
 from openfisca_core.simulations.simulation import Simulation
@@ -175,3 +176,29 @@ def test_link_resolution_tolerates_entities_without_links():
     simulation._resolve_links()
 
     assert population.links == {}
+
+
+def test_clone_rebinds_explicit_and_implicit_links(simulation):
+    simulation.persons.entity.add_link(
+        Many2OneLink("explicit_household", "unused", "household")
+    )
+    simulation._resolve_links()
+
+    clone = simulation.clone()
+
+    for population_key, population in simulation.populations.items():
+        cloned_population = clone.populations[population_key]
+        for name, link in population.links.items():
+            cloned_link = cloned_population.links[name]
+            assert cloned_link is not link
+            assert cloned_link._source_population is cloned_population
+            assert (
+                cloned_link._target_population
+                is clone.populations[link.target_entity_key]
+            )
+
+    assert clone.household.members is clone.persons
+    assert clone.household.members is not simulation.persons
+    numpy.testing.assert_array_equal(
+        clone.persons.household("rent", "2024"), [100, 100, 80]
+    )
