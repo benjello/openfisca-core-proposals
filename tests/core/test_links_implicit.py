@@ -31,8 +31,16 @@ def simulation():
         entity = household
         definition_period = periods.YEAR
 
-    tax_benefit_system.add_variable(salary)
-    tax_benefit_system.add_variable(rent)
+    class household_income(variables.Variable):
+        value_type = int
+        entity = person
+        definition_period = periods.YEAR
+
+        def formula(person, period):
+            return person.household.sum(person("salary", period))
+
+    for variable in (salary, rent, household_income):
+        tax_benefit_system.add_variable(variable)
     return SimulationBuilder().build_from_dict(
         tax_benefit_system,
         {
@@ -121,6 +129,56 @@ def test_clone_rebinds_explicit_and_implicit_links(simulation):
     numpy.testing.assert_array_equal(
         clone.persons.household("rent", "2024"), [100, 100, 80]
     )
+
+
+def test_projection_runs_inside_a_formula(simulation):
+    numpy.testing.assert_array_equal(
+        simulation.calculate("household_income", "2024"),
+        [30, 30, 5],
+    )
+
+
+def test_projector_proxy_preserves_attributes(simulation):
+    adult = simulation.persons.household.adult
+
+    assert adult.role is simulation.household.entity.ADULT
+    numpy.testing.assert_array_equal(
+        adult.has_role(simulation.household.entity.ADULT),
+        [True, True, True],
+    )
+
+
+def test_equal_population_sizes_do_not_confuse_projection():
+    person = entities.SingleEntity("person", "persons", "", "")
+    household = entities.GroupEntity(
+        "household",
+        "households",
+        "",
+        "",
+        roles=[{"key": "member"}],
+    )
+    tax_benefit_system = taxbenefitsystems.TaxBenefitSystem([person, household])
+
+    class salary(variables.Variable):
+        value_type = int
+        entity = person
+        definition_period = periods.YEAR
+
+    tax_benefit_system.add_variable(salary)
+    simulation = SimulationBuilder().build_default_simulation(
+        tax_benefit_system,
+        count=2,
+    )
+    simulation.set_input("salary", "2024", [10, 20])
+    simulation.household.members_entity_id = numpy.array([1, 0])
+    simulation.household._members_position = None
+    simulation.household._ordered_members_map = None
+
+    salaries = simulation.persons.household.members("salary", "2024")
+    grouped = simulation.persons.household.sum(salaries)
+
+    numpy.testing.assert_array_equal(salaries, [10, 20])
+    numpy.testing.assert_array_equal(grouped, [10, 20])
 
 
 def test_implicit_links_use_the_tax_benefit_system_person_key():
