@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy
 
 from openfisca_core import errors, indexed_enums, periods
+from openfisca_core.populations import types as population_types
+from openfisca_core.populations._errors import (
+    IncompatibleOptionsError,
+    InvalidOptionError,
+)
 
 from .link import Link, LinkResolutionError, _role_matches
 
@@ -12,7 +19,7 @@ from .link import Link, LinkResolutionError, _role_matches
 class Many2OneLink(Link):
     """Navigate from each source member to at most one target entity."""
 
-    def get(self, variable_name: str, period) -> numpy.ndarray:
+    def get(self, variable_name: str, period, options=None) -> numpy.ndarray:
         """Return a target variable projected to source rows."""
         if not self.is_resolved:
             message = f"Link '{self.name}' is not bound to a simulation"
@@ -30,8 +37,23 @@ class Many2OneLink(Link):
             )
             raise LinkResolutionError(message) from error
 
+        if isinstance(options, Sequence):
+            if (
+                population_types.Option.ADD in options
+                and population_types.Option.DIVIDE in options
+            ):
+                raise IncompatibleOptionsError(variable_name)
+            if options and not any(
+                option in options for option in population_types.Option
+            ):
+                raise InvalidOptionError(options[0], variable_name)
+
         try:
-            target_values = self._target_population(variable_name, period)
+            target_values = self._target_population(
+                variable_name,
+                period,
+                options=options,
+            )
         except (errors.CycleError, errors.SpiralError):
             raise
         except Exception as error:
@@ -62,8 +84,8 @@ class Many2OneLink(Link):
         """Read target IDs from the source population's link field."""
         return self._source_population(self.link_field, period)
 
-    def __call__(self, variable_name: str, period) -> numpy.ndarray:
-        return self.get(variable_name, period)
+    def __call__(self, variable_name: str, period, *, options=None) -> numpy.ndarray:
+        return self.get(variable_name, period, options=options)
 
     @property
     def role(self) -> numpy.ndarray | None:
