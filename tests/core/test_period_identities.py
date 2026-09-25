@@ -103,3 +103,10 @@ def test_activate_dynamic_mode_rejects_invalid_ids(permanent_ids, message) -> No
 
     with pytest.raises(ValueError, match=message):
         simulation.persons.activate_dynamic_mode("2024-01", permanent_ids)
+
+
+def test_sparse_permanent_ids_are_rejected_before_dense_allocation() -> None:
+    simulation, _ = build_simulation()
+
+    with pytest.raises(ValueError, match="too sparse"):
+        simulation.persons.activate_dynamic_mode("2024-01", [0, 1_000_000_000])

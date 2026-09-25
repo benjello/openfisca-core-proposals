@@ -204,8 +204,17 @@ class GroupPopulation(Population):
             raise InvalidArraySizeError(array, self.entity.key, expected_count)
 
     def activate_dynamic_mode(self, period, permanent_ids=None) -> None:
-        """Enable group-count snapshots; membership remains explicitly managed."""
+        """Enable dense integer group IDs and period group-count snapshots."""
+        if permanent_ids is not None and not numpy.array_equal(
+            permanent_ids,
+            numpy.arange(self.count),
+        ):
+            raise ValueError(
+                "Dynamic group permanent_ids must be the dense range "
+                f"0 to {self.count - 1}",
+            )
         super().activate_dynamic_mode(period, permanent_ids)
+        self.ids = self._get_alive_ids_for_period(period)
 
     def set_members_for_period(
         self,
@@ -216,8 +225,10 @@ class GroupPopulation(Population):
         """Set membership from ``period`` until the next explicit snapshot.
 
         In static mode, person and group counts remain fixed. In dynamic mode,
-        the membership length follows the period's person count and group count
-        becomes ``max(members_entity_id) + 1`` (or zero for no members).
+        the membership length follows the period's person count. Group IDs are
+        dense integers from zero through the largest referenced ID. Interior
+        unreferenced IDs remain empty groups; unreferenced terminal IDs are
+        dissolved. An empty membership therefore dissolves every group.
         """
         snapshot_period = self._validate_structure_period(period)
         array = numpy.asarray(members_entity_id)
@@ -239,6 +250,7 @@ class GroupPopulation(Population):
             raise ValueError("members_entity_id must contain integer IDs")
         if array.size and numpy.any(array < 0):
             raise ValueError("members_entity_id must contain non-negative IDs")
+        self._validate_id_density(array, "members_entity_id")
         if not self._dynamic and numpy.any(array >= self.count):
             raise ValueError(
                 "members_entity_id must reference an existing group "
@@ -292,6 +304,7 @@ class GroupPopulation(Population):
                 snapshot_period,
                 numpy.arange(group_count, dtype=numpy.intp),
             )
+            self.ids = numpy.arange(group_count, dtype=numpy.intp)
 
         next_starts = [
             item.start
@@ -413,6 +426,7 @@ class GroupPopulation(Population):
             not self._dynamic and numpy.any(new_membership >= self.count)
         ):
             raise ValueError("members_entity_id contains an unknown group ID")
+        self._validate_id_density(new_membership, "members_entity_id")
 
         new_membership = new_membership.astype(numpy.intp, copy=False)
         if self._dynamic:
@@ -534,6 +548,7 @@ class GroupPopulation(Population):
             raise ValueError("members_entity_id must contain integer IDs")
         if numpy.any(array < 0):
             raise ValueError("members_entity_id must contain non-negative IDs")
+        self._validate_id_density(array, "members_entity_id")
 
         self._members_entity_id = array.astype(numpy.intp, copy=False)
         self.count = int(numpy.max(array)) + 1
