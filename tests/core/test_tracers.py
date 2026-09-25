@@ -238,9 +238,7 @@ def test_flat_trace_includes_formula_type(tracer) -> None:
     tracer._exit_calculation()
 
     assert tracer.get_flat_trace()["a<2019>"]["formula_type"] == "initial"
-    assert (
-        tracer.get_serialized_flat_trace()["a<2019>"]["formula_type"] == "initial"
-    )
+    assert tracer.get_serialized_flat_trace()["a<2019>"]["formula_type"] == "initial"
 
 
 def test_flat_trace_serialize_vectorial_values(tracer) -> None:

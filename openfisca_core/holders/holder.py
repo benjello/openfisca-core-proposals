@@ -519,8 +519,7 @@ class Holder:
             )
             overhead_bytes += sum(map(sys.getsizeof, self._as_of_patches))
             overhead_bytes += sum(
-                sys.getsizeof(snapshot)
-                for snapshot in self._as_of_snapshots.values()
+                sys.getsizeof(snapshot) for snapshot in self._as_of_snapshots.values()
             )
             usage.update(
                 {
