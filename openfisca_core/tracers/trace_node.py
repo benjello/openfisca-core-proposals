@@ -27,6 +27,9 @@ class TraceNode:
     #: The value of the node.
     value: None | t.VarArray = None
 
+    #: The stateful formula kind, or None for regular formulas and cache hits.
+    formula_type: str | None = None
+
     #: The start time of the node.
     start: t.Time = 0.0
 
