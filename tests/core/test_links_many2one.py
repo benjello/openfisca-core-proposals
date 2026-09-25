@@ -10,6 +10,11 @@ from openfisca_core import (
 )
 from openfisca_core.links import Many2OneLink
 from openfisca_core.links.link import LinkResolutionError
+from openfisca_core.populations import ADD, DIVIDE
+from openfisca_core.populations._errors import (
+    IncompatibleOptionsError,
+    InvalidOptionError,
+)
 from openfisca_core.simulations import SimulationBuilder
 
 
@@ -112,3 +117,25 @@ def test_many2one_rejects_variables_from_another_entity():
 def test_many2one_rank_rejects_non_group_target(simulation):
     with pytest.raises(ValueError, match="rank requires its target to group"):
         simulation.persons.mother.rank("age", "2024")
+
+
+def test_many2one_supports_add_and_divide(simulation):
+    link = simulation.persons.mother
+
+    numpy.testing.assert_array_equal(
+        link("age", "2024", options=[ADD]),
+        [0, 45, 25],
+    )
+    numpy.testing.assert_allclose(
+        link("age", "2024-01", options=[DIVIDE]),
+        [0, 45 / 12, 25 / 12],
+    )
+
+
+def test_many2one_rejects_invalid_options(simulation):
+    link = simulation.persons.mother
+
+    with pytest.raises(IncompatibleOptionsError):
+        link("age", "2024", options=[ADD, DIVIDE])
+    with pytest.raises(InvalidOptionError):
+        link("age", "2024", options=["INVALID"])
