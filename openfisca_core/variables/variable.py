@@ -194,6 +194,20 @@ class Variable:
             )
             raise ValueError(msg)
 
+        initial_formulas_attr, attr = helpers._partition(
+            attr,
+            lambda name, value: name.startswith(
+                config.INITIAL_FORMULA_NAME_PREFIX,
+            ),
+        )
+        self.initial_formulas = self.set_initial_formulas(initial_formulas_attr)
+        if self.initial_formulas and not self.as_of:
+            msg = (
+                f'Variable "{self.name}" declares initial_formula without as_of. '
+                "initial_formula is only available for as_of variables."
+            )
+            raise ValueError(msg)
+
         formulas_attr, unexpected_attrs = helpers._partition(
             attr,
             lambda name, value: name.startswith(config.FORMULA_NAME_PREFIX),
@@ -367,6 +381,62 @@ class Variable:
 
         return formulas
 
+    def set_initial_formulas(self, formulas_attr):
+        formulas = sortedcontainers.sorteddict.SortedDict()
+        for formula_name, formula in formulas_attr.items():
+            starting_date = self.parse_initial_formula_name(formula_name)
+            if self.end is not None and starting_date > self.end:
+                msg = (
+                    f'Variable "{self.name}" ends on "{self.end}", but declares '
+                    f'an initial_formula from "{starting_date}" ({formula_name}).'
+                )
+                raise ValueError(msg)
+            formulas[str(starting_date)] = formula
+
+        baseline_formulas = (
+            self.baseline_variable.initial_formulas
+            if self.baseline_variable is not None
+            else {}
+        )
+        first_reform_date = formulas.peekitem(0)[0] if formulas else None
+        formulas.update(
+            {
+                start_date: formula
+                for start_date, formula in baseline_formulas.items()
+                if first_reform_date is None or start_date < first_reform_date
+            },
+        )
+        return formulas
+
+    def parse_initial_formula_name(self, attribute_name):
+        """Return the start date encoded in an initial formula name."""
+
+        def raise_error() -> NoReturn:
+            msg = (
+                f'Unrecognized initial_formula name in variable "{self.name}". '
+                'Expected "initial_formula", "initial_formula_YYYY", '
+                '"initial_formula_YYYY_MM", or "initial_formula_YYYY_MM_DD". '
+                f'Found: "{attribute_name}".'
+            )
+            raise ValueError(msg)
+
+        if attribute_name == config.INITIAL_FORMULA_NAME_PREFIX:
+            return datetime.date.min
+
+        match = re.fullmatch(
+            r"initial_formula_(\d{4})(?:_(\d{2}))?(?:_(\d{2}))?",
+            attribute_name,
+        )
+        if not match:
+            raise_error()
+        date_str = "-".join(
+            [match.group(1), match.group(2) or "01", match.group(3) or "01"],
+        )
+        try:
+            return datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            raise_error()
+
     def parse_formula_name(self, attribute_name):
         """Returns the starting date of a formula based on its name.
 
@@ -463,6 +533,35 @@ class Variable:
                 return self.formulas[start_date]
 
         return None
+
+    def get_initial_formula(
+        self,
+        period: None | t.Instant | t.Period | str | int = None,
+    ) -> None | t.Formula:
+        """Return the initial formula applicable at ``period``."""
+        if not self.initial_formulas:
+            return None
+        if period is None:
+            return self.initial_formulas.peekitem(index=0)[1]
+
+        if isinstance(period, Period):
+            instant = period.start
+        else:
+            try:
+                instant = periods.period(period).start
+            except ValueError:
+                instant = periods.instant(period)
+        if instant is None or (self.end and instant.date > self.end):
+            return None
+
+        for start_date in reversed(self.initial_formulas):
+            if start_date <= str(instant):
+                return self.initial_formulas[start_date]
+        return None
+
+    @property
+    def has_initial_formula(self) -> bool:
+        return bool(self.initial_formulas)
 
     def clone(self):
         return self.__class__()
