@@ -372,7 +372,11 @@ class Simulation:
             self._check_for_stateful_cycle(
                 variable.name,
                 period,
-                allow_past=holder._as_of_base is not None,
+                allow_past=(
+                    holder._as_of_base is not None
+                    and holder._as_of_base_instant
+                    <= holder._as_of_reference_instant(period)
+                ),
             )
             result = self._run_stateful_formula(
                 initial_formula,
