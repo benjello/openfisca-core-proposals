@@ -188,12 +188,23 @@ class Simulation:
             return holder.default_array()
 
         if variable.has_initial_formula or variable.has_transition_formula:
-            return self._calculate_as_of_transition(
-                variable,
-                population,
-                holder,
-                period,
-            )
+            previous_state = None
+            if population._dynamic:
+                mapping = population.get_period_id_to_rownum(period)
+                if mapping is not None:
+                    previous_state = (population.count, population._id_to_rownum)
+                    population.count = population.get_count_for_period(period)
+                    population._id_to_rownum = mapping
+            try:
+                return self._calculate_as_of_transition(
+                    variable,
+                    population,
+                    holder,
+                    period,
+                )
+            finally:
+                if previous_state is not None:
+                    population.count, population._id_to_rownum = previous_state
 
         # First look for a value already cached
         cached_array = holder.get_array(period)

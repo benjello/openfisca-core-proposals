@@ -62,13 +62,29 @@ class Many2OneLink(Link):
             target_values,
             target_ids,
             self._default_value(variable_name),
+            period,
         )
 
-    def _project_values(self, target_values, target_ids, default) -> numpy.ndarray:
+    def _project_values(
+        self,
+        target_values,
+        target_ids,
+        default,
+        period=None,
+    ) -> numpy.ndarray:
         """Project target values through this link's ID resolution."""
-        target_rows = self._resolve_ids(target_ids, self._target_population)
+        target_rows = self._resolve_ids_for_period(
+            target_ids,
+            self._target_population,
+            period,
+        )
+        source_count = (
+            self._source_population.get_count_for_period(period)
+            if period is not None and self._source_population._dynamic
+            else self._source_population.count
+        )
         result = numpy.full(
-            self._source_population.count,
+            source_count,
             default,
             dtype=target_values.dtype,
         )
@@ -172,7 +188,7 @@ class _ChainedLink:
         default = self._links[-1]._default_value(variable_name)
         for link in reversed(self._links[:-1]):
             target_ids = link._get_target_ids(period)
-            result = link._project_values(result, target_ids, default)
+            result = link._project_values(result, target_ids, default, period)
         return result
 
     def __call__(self, variable_name: str, period, *, options=None) -> numpy.ndarray:

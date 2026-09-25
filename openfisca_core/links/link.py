@@ -104,6 +104,17 @@ class Link:
             rows[valid] = ids[valid]
         return rows
 
+    def _resolve_ids_for_period(self, ids, population, period) -> numpy.ndarray:
+        if period is None or not getattr(population, "_dynamic", False):
+            return self._resolve_ids(ids, population)
+        previous_state = (population.count, population._id_to_rownum)
+        population.count = population.get_count_for_period(period)
+        population._id_to_rownum = population.get_period_id_to_rownum(period)
+        try:
+            return self._resolve_ids(ids, population)
+        finally:
+            population.count, population._id_to_rownum = previous_state
+
     def __repr__(self) -> str:
         return (
             f"{type(self).__name__}(name={self.name!r}, "

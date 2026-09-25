@@ -218,7 +218,13 @@ class Holder:
         return None
 
     def _get_as_of(self, period):
-        return self._reconstruct_as_of(self._as_of_reference_instant(period))
+        self._ensure_as_of_capacity()
+        result = self._reconstruct_as_of(self._as_of_reference_instant(period))
+        if result is None or not self.population._dynamic:
+            return result
+        result = result[self.population._get_alive_ids_for_period(period)]
+        result.flags.writeable = False
+        return result
 
     def _as_of_reference_instant(self, period):
         return period.start if self._as_of == "start" else period.stop
@@ -271,6 +277,33 @@ class Holder:
     def _immutable_array(value):
         result = value.copy()
         result.flags.writeable = False
+        return result
+
+    def _ensure_as_of_capacity(self) -> None:
+        if not self.population._dynamic or self._as_of_base is None:
+            return
+        permanent_ids = self.population._permanent_ids
+        capacity = int(numpy.max(permanent_ids)) + 1 if len(permanent_ids) else 0
+        if len(self._as_of_base) >= capacity:
+            return
+        base = self.variable.default_array(capacity)
+        base[: len(self._as_of_base)] = self._as_of_base
+        self._as_of_base = self._immutable_array(base)
+        self._as_of_snapshots.clear()
+
+    def _as_of_storage_value(self, value, period):
+        if not self.population._dynamic:
+            return value
+        self._ensure_as_of_capacity()
+        permanent_ids = self.population._permanent_ids
+        capacity = int(numpy.max(permanent_ids)) + 1 if len(permanent_ids) else 0
+        previous = self._reconstruct_as_of(self._as_of_reference_instant(period))
+        result = (
+            self.variable.default_array(capacity)
+            if previous is None
+            else previous.copy()
+        )
+        result[self.population._get_alive_ids_for_period(period)] = value
         return result
 
     def _insert_as_of_patch(self, instant, indices, values, source) -> None:
@@ -422,10 +455,15 @@ class Holder:
         if len(numpy.unique(indices)) != len(indices):
             msg = "set_input_sparse indices must not contain duplicates."
             raise ValueError(msg)
-        if ((indices < 0) | (indices >= self.population.count)).any():
+        population_count = (
+            self.population.get_count_for_period(period)
+            if self.population._dynamic
+            else self.population.count
+        )
+        if ((indices < 0) | (indices >= population_count)).any():
             msg = (
                 "set_input_sparse indices must be between 0 and "
-                f"{self.population.count - 1}."
+                f"{population_count - 1}."
             )
             raise IndexError(msg)
 
@@ -465,6 +503,11 @@ class Holder:
                 ),
             )
         self._record_as_of_period(period, as_of_source)
+        if as_of_source == "explicit":
+            self._input_periods.add(period)
+        if self.population._dynamic:
+            self._ensure_as_of_capacity()
+            indices = self.population._get_alive_ids_for_period(period)[indices]
         previous = self._reconstruct_as_of(period.start)
         changed = values != previous[indices]
         if changed.any():
@@ -700,6 +743,7 @@ class Holder:
         self._check_set_period(period)
 
         if self._as_of:
+            value = self._as_of_storage_value(value, period)
             self._set_as_of(period, value, as_of_source)
             if self._is_setting_input:
                 self._input_periods.add(periods.period(period))

@@ -29,7 +29,16 @@ class One2ManyLink(Link):
                 f"'{self.link_field}': {error}"
             )
             raise LinkResolutionError(message) from error
-        return self._resolve_ids(source_ids, self._source_population)
+        return self._resolve_ids_for_period(
+            source_ids,
+            self._source_population,
+            period,
+        )
+
+    def _source_count(self, period) -> int:
+        if period is not None and self._source_population._dynamic:
+            return self._source_population.get_count_for_period(period)
+        return self._source_population.count
 
     def _valid_values(self, variable_name: str, period, role=None, condition=None):
         values = self._target_values(variable_name, period)
@@ -68,7 +77,7 @@ class One2ManyLink(Link):
     ) -> numpy.ndarray:
         """Sum target values for each source entity."""
         source_rows, values = self._valid_values(variable_name, period, role, condition)
-        result = numpy.zeros(self._source_population.count, dtype=values.dtype)
+        result = numpy.zeros(self._source_count(period), dtype=values.dtype)
         numpy.add.at(result, source_rows, values)
         return result
 
@@ -78,7 +87,7 @@ class One2ManyLink(Link):
         valid = self._filter(source_rows, role, condition, period)
         return numpy.bincount(
             source_rows[valid],
-            minlength=self._source_population.count,
+            minlength=self._source_count(period),
         )
 
     def any(
@@ -86,7 +95,7 @@ class One2ManyLink(Link):
     ) -> numpy.ndarray:
         """Return whether any target value is truthy for each source."""
         source_rows, values = self._valid_values(variable_name, period, role, condition)
-        result = numpy.zeros(self._source_population.count, dtype=bool)
+        result = numpy.zeros(self._source_count(period), dtype=bool)
         numpy.logical_or.at(result, source_rows, values)
         return result
 
@@ -95,7 +104,7 @@ class One2ManyLink(Link):
     ) -> numpy.ndarray:
         """Return whether all target values are truthy for each source."""
         source_rows, values = self._valid_values(variable_name, period, role, condition)
-        result = numpy.ones(self._source_population.count, dtype=bool)
+        result = numpy.ones(self._source_count(period), dtype=bool)
         numpy.logical_and.at(result, source_rows, values)
         return result
 
@@ -118,7 +127,7 @@ class One2ManyLink(Link):
     def _extreme(self, variable_name, period, operation, initial, role, condition):
         source_rows, values = self._valid_values(variable_name, period, role, condition)
         dtype = numpy.result_type(values.dtype, type(initial))
-        result = numpy.full(self._source_population.count, initial, dtype=dtype)
+        result = numpy.full(self._source_count(period), initial, dtype=dtype)
         operation.at(result, source_rows, values)
         result[result == initial] = 0
         return result
@@ -132,7 +141,7 @@ class One2ManyLink(Link):
         return numpy.divide(
             total,
             count,
-            out=numpy.zeros(self._source_population.count, dtype=float),
+            out=numpy.zeros(self._source_count(period), dtype=float),
             where=count != 0,
         )
 
@@ -149,8 +158,9 @@ class One2ManyLink(Link):
         if n < 0:
             raise ValueError("n must be non-negative")
         source_rows, values = self._valid_values(variable_name, period, role, condition)
-        result = numpy.zeros(self._source_population.count, dtype=values.dtype)
-        positions = numpy.zeros(self._source_population.count, dtype=numpy.intp)
+        source_count = self._source_count(period)
+        result = numpy.zeros(source_count, dtype=values.dtype)
+        positions = numpy.zeros(source_count, dtype=numpy.intp)
         for source_row, value in zip(source_rows, values):
             if positions[source_row] == n:
                 result[source_row] = value
@@ -172,7 +182,7 @@ class One2ManyLink(Link):
             role_value,
             condition,
         )
-        result = numpy.zeros(self._source_population.count, dtype=values.dtype)
+        result = numpy.zeros(self._source_count(period), dtype=values.dtype)
         result[source_rows] = values
         return result
 

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
+
 import numpy
 
-from openfisca_core import projectors
+from openfisca_core import periods, projectors
 
 from .link import _role_matches
 from .many2one import Many2OneLink, _ChainedLink
@@ -20,7 +22,23 @@ class _ProjectedCallable:
 
     def __call__(self, *args, **kwargs):
         result = self._function(*args, **kwargs)
-        return self._link._project_entity_result(result)
+        try:
+            period = (
+                inspect.signature(self._function)
+                .bind_partial(
+                    *args,
+                    **kwargs,
+                )
+                .arguments.get("period")
+            )
+        except (TypeError, ValueError):
+            period = kwargs.get("period")
+        if period is None and isinstance(self._function, projectors.Projector):
+            period = args[1] if len(args) > 1 else None
+        return self._link._project_entity_result(
+            result,
+            period=period,
+        )
 
     def __getattr__(self, name: str):
         attribute = getattr(self._function, name)
@@ -53,12 +71,23 @@ class ImplicitMany2OneLink(Many2OneLink):
     def role(self) -> numpy.ndarray:
         return self._target_population.members_role
 
-    def _project_entity_result(self, result):
+    def _get_roles(self, period) -> numpy.ndarray:
+        return self._target_population._get_members_role(period)
+
+    def has_role(self, role_value, period=periods.ETERNITY) -> numpy.ndarray:
+        return _role_matches(self._get_roles(period), role_value)
+
+    def _project_entity_result(self, result, period=None):
         """Project a result known to have one value per target entity."""
         result = numpy.asarray(result)
-        if result.size != self._target_population.count:
+        target_count = (
+            self._target_population.get_count_for_period(period)
+            if period is not None and self._target_population._dynamic
+            else self._target_population.count
+        )
+        if result.size != target_count:
             message = (
-                f"Link '{self.name}' expected {self._target_population.count} "
+                f"Link '{self.name}' expected {target_count} "
                 f"entity values, got {result.size}"
             )
             raise ValueError(message)
