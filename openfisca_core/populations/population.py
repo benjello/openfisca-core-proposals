@@ -20,7 +20,7 @@ class Population(CorePopulation):
             for (variable, holder) in self._holders.items()
         }
         result.count = self.count
-        result.ids = self.ids
+        result.ids = self.ids[:]
         result._dynamic = self._dynamic
         result._permanent_ids = (
             None if self._permanent_ids is None else self._permanent_ids.copy()

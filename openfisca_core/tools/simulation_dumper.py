@@ -23,6 +23,8 @@ def dump_simulation(simulation, directory) -> None:
 
     entities_dump_dir = os.path.join(directory, "__entities__")
     os.mkdir(entities_dump_dir)
+    inputs_dump_dir = os.path.join(directory, "__inputs__")
+    os.mkdir(inputs_dump_dir)
 
     for entity in simulation.populations.values():
         # Dump entity structure
@@ -30,7 +32,7 @@ def dump_simulation(simulation, directory) -> None:
 
         # Dump variable values
         for holder in entity._holders.values():
-            _dump_holder(holder, directory)
+            _dump_holder(holder, directory, inputs_dump_dir)
 
 
 def restore_simulation(directory, tax_benefit_system, **kwargs):
@@ -41,6 +43,8 @@ def restore_simulation(directory, tax_benefit_system, **kwargs):
     )
 
     entities_dump_dir = os.path.join(directory, "__entities__")
+    inputs_dump_dir = os.path.join(directory, "__inputs__")
+    person_count = None
     for population in simulation.populations.values():
         if population.entity.is_person:
             continue
@@ -50,26 +54,34 @@ def restore_simulation(directory, tax_benefit_system, **kwargs):
         if not population.entity.is_person:
             continue
         _restore_entity(population, entities_dump_dir)
-        if population._dynamic:
-            latest = max(population._period_index, key=lambda period: period.start)
-            population.count = population._period_index[latest]["count"]
-        else:
-            population.count = person_count
+        if not population._dynamic:
+            population.count = (
+                len(population.ids) if person_count is None else person_count
+            )
 
     variables_to_restore = (
-        variable for variable in os.listdir(directory) if variable != "__entities__"
+        variable
+        for variable in os.listdir(directory)
+        if variable not in ("__entities__", "__inputs__")
     )
     for variable in variables_to_restore:
-        _restore_holder(simulation, variable, directory)
+        _restore_holder(simulation, variable, directory, inputs_dump_dir)
 
     return simulation
 
 
-def _dump_holder(holder, directory) -> None:
+def _dump_holder(holder, directory, inputs_directory) -> None:
     disk_storage = holder.create_disk_storage(directory, preserve=True)
     for period in holder.get_known_periods():
         value = holder.get_array(period)
         disk_storage.put(value, period)
+    if holder._input_periods:
+        numpy.save(
+            os.path.join(inputs_directory, f"{holder.variable.name}.npy"),
+            numpy.asarray(
+                [str(period) for period in sorted(holder._input_periods, key=str)],
+            ),
+        )
 
 
 def _dump_entity(population, directory) -> None:
@@ -183,6 +195,7 @@ def _restore_entity(population, directory):
             }
         latest = max(population._period_index, key=lambda period: period.start)
         population._id_to_rownum = population._period_index[latest]["id_to_rownum"]
+        population.count = population._period_index[latest]["count"]
 
     if population.entity.is_person:
         return None
@@ -234,10 +247,12 @@ def _restore_entity(population, directory):
     person_count = len(population.members_entity_id)
     if not population._dynamic:
         population.count = max(population.members_entity_id) + 1
+    elif len(population.ids) != population.count:
+        population.ids = population._get_alive_ids_for_period(latest)
     return person_count
 
 
-def _restore_holder(simulation, variable_name, directory) -> None:
+def _restore_holder(simulation, variable_name, directory, inputs_directory) -> None:
     storage_dir = os.path.join(directory, variable_name)
 
     holder = simulation.get_holder(variable_name)
@@ -260,3 +275,9 @@ def _restore_holder(simulation, variable_name, directory) -> None:
     for period in disk_storage.get_known_periods():
         value = disk_storage.get(period)
         holder.put_in_cache(value, period)
+
+    input_periods_path = os.path.join(inputs_directory, f"{variable_name}.npy")
+    if os.path.exists(input_periods_path):
+        holder._input_periods = {
+            periods.period(str(period)) for period in numpy.load(input_periods_path)
+        }
