@@ -6,7 +6,7 @@ from typing import TypeVar
 
 import numpy
 
-from openfisca_core import holders, periods
+from openfisca_core import holders, indexed_enums, periods
 
 from . import types as t
 from ._errors import (
@@ -45,6 +45,10 @@ class CorePopulation:
     def __init__(self, entity: t.CoreEntity, *__args: object, **__kwds: object) -> None:
         self.entity = entity
         self._holders: t.HolderByVariable = {}
+        self._dynamic = False
+        self._permanent_ids = None
+        self._id_to_rownum = None
+        self._period_index = {}
 
     def __call__(
         self,
@@ -449,6 +453,109 @@ class CorePopulation:
             total_nb_bytes=total_memory_usage,
             by_variable=holders_memory_usage,
         )
+
+    def activate_dynamic_mode(
+        self,
+        period: t.PeriodLike,
+        permanent_ids=None,
+    ) -> None:
+        """Enable period identity snapshots from an initial population state."""
+        if permanent_ids is None:
+            permanent_ids = numpy.arange(self.count, dtype=numpy.intp)
+        permanent_ids = self._validate_permanent_ids(permanent_ids, self.count)
+        self._dynamic = True
+        self._permanent_ids = permanent_ids.copy()
+        self._set_period_identity_snapshot(period, permanent_ids)
+
+    @staticmethod
+    def _validate_permanent_ids(permanent_ids, expected_count=None):
+        ids = numpy.asarray(permanent_ids)
+        if ids.ndim != 1:
+            raise ValueError("permanent_ids must be a one-dimensional array")
+        if expected_count is not None and len(ids) != expected_count:
+            raise ValueError(
+                "permanent_ids must contain one entry per population member "
+                f"(expected {expected_count}, got {len(ids)})",
+            )
+        if not numpy.issubdtype(ids.dtype, numpy.integer):
+            raise ValueError("permanent_ids must contain integer IDs")
+        if numpy.any(ids < 0):
+            raise ValueError("permanent_ids must contain non-negative IDs")
+        if len(numpy.unique(ids)) != len(ids):
+            raise ValueError("permanent_ids must not contain duplicates")
+        return ids.astype(numpy.intp, copy=False)
+
+    @staticmethod
+    def _build_id_to_rownum(permanent_ids):
+        if len(permanent_ids) == 0:
+            return numpy.array([], dtype=numpy.intp)
+        result = numpy.full(int(numpy.max(permanent_ids)) + 1, -1, dtype=numpy.intp)
+        result[permanent_ids] = numpy.arange(len(permanent_ids), dtype=numpy.intp)
+        result.flags.writeable = False
+        return result
+
+    def _set_period_identity_snapshot(self, period, permanent_ids) -> None:
+        snapshot_period = periods.period(period)
+        id_to_rownum = self._build_id_to_rownum(permanent_ids)
+        self._period_index[snapshot_period] = {
+            "count": len(permanent_ids),
+            "id_to_rownum": id_to_rownum,
+        }
+        self._id_to_rownum = id_to_rownum
+
+    def snapshot_period(self, period: t.PeriodLike) -> None:
+        """Snapshot the current row ordering for ``period``."""
+        if self._permanent_ids is None:
+            permanent_ids = numpy.arange(self.count, dtype=numpy.intp)
+        else:
+            permanent_ids = self._permanent_ids
+        self._set_period_identity_snapshot(period, permanent_ids)
+
+    def _get_period_identity_snapshot(self, period):
+        if not self._period_index:
+            return None
+        requested = periods.period(period)
+        candidates = (
+            (snapshot_period, snapshot)
+            for snapshot_period, snapshot in self._period_index.items()
+            if snapshot_period.start <= requested.start
+        )
+        latest = max(candidates, key=lambda item: item[0].start, default=None)
+        return None if latest is None else latest[1]
+
+    def get_period_id_to_rownum(self, period):
+        """Return the latest identity mapping applicable to ``period``."""
+        snapshot = self._get_period_identity_snapshot(period)
+        return None if snapshot is None else snapshot["id_to_rownum"]
+
+    def get_count_for_period(self, period) -> int:
+        """Return the latest population count applicable to ``period``."""
+        snapshot = self._get_period_identity_snapshot(period)
+        return self.count if snapshot is None else snapshot["count"]
+
+    def remap_array(self, array, from_period, to_period, default=0):
+        """Remap an array between period row spaces using permanent IDs."""
+        from_snapshot = self._get_period_identity_snapshot(from_period)
+        to_snapshot = self._get_period_identity_snapshot(to_period)
+        if from_snapshot is None or to_snapshot is None:
+            return array
+        if len(array) != from_snapshot["count"]:
+            raise ValueError(
+                f"Array has {len(array)} rows, expected {from_snapshot['count']} "
+                f"for period {periods.period(from_period)}",
+            )
+
+        result = numpy.full(to_snapshot["count"], default, dtype=array.dtype)
+        from_mapping = from_snapshot["id_to_rownum"]
+        to_mapping = to_snapshot["id_to_rownum"]
+        shared_size = min(len(from_mapping), len(to_mapping))
+        if shared_size:
+            shared = (from_mapping[:shared_size] >= 0) & (to_mapping[:shared_size] >= 0)
+            permanent_ids = numpy.flatnonzero(shared)
+            result[to_mapping[permanent_ids]] = array[from_mapping[permanent_ids]]
+        if isinstance(array, indexed_enums.EnumArray):
+            return indexed_enums.EnumArray(result, array.possible_values)
+        return result
 
 
 __all__ = ["CorePopulation"]
