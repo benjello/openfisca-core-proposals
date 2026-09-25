@@ -235,6 +235,12 @@ class Variable:
             lambda name, value: name.startswith(config.FORMULA_NAME_PREFIX),
         )
         self.formulas = self.set_formulas(formulas_attr)
+        if self.formulas and self.initial_formulas:
+            msg = (
+                f'Variable "{self.name}" declares both formula and initial_formula, '
+                "which are mutually exclusive."
+            )
+            raise ValueError(msg)
         if self.formulas and self.transition_formulas:
             msg = (
                 f'Variable "{self.name}" declares both formula and '
