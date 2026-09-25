@@ -52,6 +52,7 @@ class FlatTrace:
                 "value": node.value,
                 "calculation_time": node.calculation_time(),
                 "formula_time": node.formula_time(),
+                "formula_type": node.formula_type,
             },
         }
 

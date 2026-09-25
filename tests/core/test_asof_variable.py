@@ -354,9 +354,9 @@ def test_as_of_memory_usage_includes_base_patches_and_snapshots():
 
     usage = holder.get_memory_usage()
     assert usage["nb_arrays"] == len(unique_arrays)
-    assert usage["total_nb_bytes"] == sum(
-        array.nbytes for array in unique_arrays.values()
-    )
+    array_bytes = sum(array.nbytes for array in unique_arrays.values())
+    assert usage["storage_overhead_bytes"] > 0
+    assert usage["total_nb_bytes"] == array_bytes + usage["storage_overhead_bytes"]
 
 
 def test_as_of_does_not_persist_past_variable_end():

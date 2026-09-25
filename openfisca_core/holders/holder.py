@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import bisect
 import os
+import sys
 import warnings
 from collections import OrderedDict
 from collections.abc import Sequence
@@ -481,13 +482,34 @@ class Holder:
             )
             arrays.extend(snapshot for snapshot, _ in self._as_of_snapshots.values())
             unique_arrays = {id(array): array for array in arrays if array is not None}
+            array_bytes = sum(array.nbytes for array in unique_arrays.values())
+            overhead_bytes = sum(
+                max(sys.getsizeof(array) - array.nbytes, 0)
+                for array in unique_arrays.values()
+            )
+            overhead_bytes += sum(
+                sys.getsizeof(container)
+                for container in (
+                    self._as_of_patches,
+                    self._as_of_patch_instants,
+                    self._as_of_patch_sources,
+                    self._as_of_snapshots,
+                    self._as_of_transition_computed,
+                    self._as_of_known_periods,
+                    self._as_of_explicit_periods,
+                    self._as_of_calculated_periods,
+                )
+            )
+            overhead_bytes += sum(map(sys.getsizeof, self._as_of_patches))
+            overhead_bytes += sum(
+                sys.getsizeof(snapshot) for snapshot in self._as_of_snapshots.values()
+            )
             usage.update(
                 {
                     "nb_arrays": len(unique_arrays),
-                    "total_nb_bytes": sum(
-                        array.nbytes for array in unique_arrays.values()
-                    ),
+                    "total_nb_bytes": array_bytes + overhead_bytes,
                     "cell_size": numpy.dtype(self.variable.dtype).itemsize,
+                    "storage_overhead_bytes": overhead_bytes,
                 },
             )
         else:

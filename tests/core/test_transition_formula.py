@@ -7,6 +7,7 @@ from openfisca_core.periods import DateUnit, period
 from openfisca_core.populations import Population
 from openfisca_core.simulations import Simulation
 from openfisca_core.taxbenefitsystems import TaxBenefitSystem
+from openfisca_core.tracers import SimpleTracer
 from openfisca_core.variables import Variable
 
 
@@ -397,4 +398,40 @@ def test_trace_records_initial_and_transition_formula_types():
     assert all(
         "[initial]" not in line and "[transition]" not in line
         for line in simulation.tracer.computation_log.lines()
+    )
+
+
+def test_stateful_formula_supports_tracer_without_formula_type_hook():
+    class LegacyTracer:
+        def __init__(self):
+            self.delegate = SimpleTracer()
+
+        @property
+        def stack(self):
+            return self.delegate.stack
+
+        def record_calculation_start(self, variable, calculation_period):
+            self.delegate.record_calculation_start(variable, calculation_period)
+
+        def record_calculation_result(self, value):
+            pass
+
+        def record_calculation_end(self):
+            self.delegate.record_calculation_end()
+
+    class State(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+        def initial_formula(person, period):  # noqa: N805
+            return [1, 2, 3]
+
+    simulation = make_simulation(State)
+    simulation.tracer = LegacyTracer()
+
+    numpy.testing.assert_array_equal(
+        simulation.calculate("State", "2024-01"),
+        [1, 2, 3],
     )
