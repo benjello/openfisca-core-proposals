@@ -28,12 +28,34 @@ class Many2OneLink(Link):
         projection_period = period
         if isinstance(options, Sequence) and population_types.Option.ADD in options:
             variable = self._target_population.entity.get_variable(variable_name)
-            projection_period = periods.period(period).get_subperiods(
+            requested_period = periods.period(period)
+            projection_period = requested_period.get_subperiods(
                 variable.definition_period,
             )[-1]
 
         try:
-            target_ids = self._get_target_ids(projection_period)
+            link_period = period
+            if projection_period != period:
+                if not self.link_field:
+                    link_period = projection_period
+                else:
+                    link_variable = self._source_population.entity.get_variable(
+                        self.link_field,
+                        check_existence=True,
+                    )
+                    if link_variable.definition_period not in (
+                        periods.ETERNITY,
+                        requested_period.unit,
+                    ):
+                        link_period = projection_period
+            target_ids = self._get_target_ids(link_period)
+            if self._source_population._dynamic and link_period != projection_period:
+                target_ids = self._source_population.remap_array(
+                    target_ids,
+                    link_period,
+                    projection_period,
+                    link_variable.default_value,
+                )
         except _ENGINE_ERRORS:
             raise
         except Exception as error:

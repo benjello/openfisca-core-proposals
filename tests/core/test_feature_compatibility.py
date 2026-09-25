@@ -307,3 +307,39 @@ def test_link_add_uses_last_subperiod_identity_space() -> None:
         simulation.persons.parent("score", "2024", options=[populations.ADD]),
         [3, 0],
     )
+
+
+def test_link_add_reads_annual_link_before_projecting_last_subperiod() -> None:
+    person = entities.SingleEntity("person", "persons", "", "")
+    person.add_link(Many2OneLink("parent", "parent_id", "person"))
+    tax_benefit_system = taxbenefitsystems.TaxBenefitSystem([person])
+
+    class score(variables.Variable):
+        value_type = int
+        entity = person
+        definition_period = periods.MONTH
+
+        def formula(population, period):
+            return period.start.month
+
+    class parent_id(variables.Variable):
+        value_type = int
+        entity = person
+        definition_period = periods.YEAR
+        default_value = -1
+
+    tax_benefit_system.add_variables(score, parent_id)
+    simulation = SimulationBuilder.build_default_simulation(
+        tax_benefit_system,
+        count=3,
+    )
+    simulation.persons.activate_dynamic_mode("2024-01", [10, 20, 30])
+    simulation.set_input("parent_id", "2024", [-1, 10, -1])
+    simulation.persons.register_deaths("2024-02", [30])
+    simulation.persons.register_births("2024-03", [40])
+    simulation.persons.register_deaths("2024-04", [40])
+
+    numpy.testing.assert_array_equal(
+        simulation.persons.parent("score", "2024", options=[populations.ADD]),
+        [0, 78],
+    )
