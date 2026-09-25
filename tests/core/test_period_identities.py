@@ -57,6 +57,18 @@ def test_clone_keeps_independent_identity_indexes() -> None:
 
     assert simulation.persons.get_period_id_to_rownum("2024-02")[10] == 0
     assert clone.persons.get_period_id_to_rownum("2024-02")[10] == 1
+    assert not numpy.shares_memory(
+        simulation.persons._permanent_ids,
+        clone.persons._permanent_ids,
+    )
+    assert not numpy.shares_memory(
+        simulation.persons._id_to_rownum,
+        clone.persons._id_to_rownum,
+    )
+    assert not numpy.shares_memory(
+        simulation.persons.get_period_id_to_rownum("2024-01"),
+        clone.persons.get_period_id_to_rownum("2024-01"),
+    )
 
 
 def test_identity_snapshot_periods_with_the_same_start_are_rejected() -> None:

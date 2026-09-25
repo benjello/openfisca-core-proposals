@@ -92,6 +92,19 @@ def test_membership_and_roles_can_change_atomically() -> None:
     )
 
 
+def test_membership_change_preserves_roles_set_at_the_same_instant() -> None:
+    simulation, parent, child = build_simulation()
+    supplied_roles = [parent, child, child, parent]
+    simulation.household.set_roles_for_period("2024-02", supplied_roles)
+
+    simulation.household.set_members_for_period("2024-02", [0, 1, 0, 1])
+
+    numpy.testing.assert_array_equal(
+        simulation.household._get_members_role("2024-02"),
+        supplied_roles,
+    )
+
+
 def test_role_change_invalidates_cached_group_values() -> None:
     simulation, parent, child = build_simulation()
     holder = simulation.household.get_holder("group_value")
