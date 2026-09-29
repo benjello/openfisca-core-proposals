@@ -21,6 +21,14 @@ class Population(CorePopulation):
         }
         result.count = self.count
         result.ids = self.ids
+        result._dynamic = self._dynamic
+        result._permanent_ids = (
+            None if self._permanent_ids is None else self._permanent_ids.copy()
+        )
+        result._id_to_rownum = self._id_to_rownum
+        result._period_index = {
+            period: dict(snapshot) for period, snapshot in self._period_index.items()
+        }
         return result
 
     def __getattr__(self, attribute: str) -> projectors.Projector:
