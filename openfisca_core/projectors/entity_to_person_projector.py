@@ -8,5 +8,8 @@ class EntityToPersonProjector(Projector):
         self.reference_entity = entity
         self.parent = parent
 
-    def transform(self, result, period=None):
+    def _transform(self, result, period=None):
         return self.reference_entity.project(result, period=period)
+
+    def transform(self, result):
+        return self._transform(result)
