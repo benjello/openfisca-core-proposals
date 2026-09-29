@@ -44,6 +44,7 @@ class Holder:
             self._as_of_snapshots = OrderedDict()
             self._as_of_max_snapshots = self.variable.snapshot_count
             self._as_of_transition_computed = set()
+            self._as_of_known_periods = set()
 
         # By default, do not activate on-disk storage, or variable dropping
         self._disk_storage = None
@@ -75,6 +76,7 @@ class Holder:
             new_dict["_as_of_transition_computed"] = set(
                 self._as_of_transition_computed,
             )
+            new_dict["_as_of_known_periods"] = set(self._as_of_known_periods)
 
         new_dict["population"] = population
         new_dict["simulation"] = population.simulation
@@ -98,9 +100,49 @@ class Holder:
 
         If ``period`` is not ``None``, only remove all values for any period included in period (e.g. if period is "2017", values for "2017-01", "2017-07", etc. would be removed)
         """
+        if self._as_of:
+            self._delete_as_of(period)
         self._memory_storage.delete(period)
         if self._disk_storage:
             self._disk_storage.delete(period)
+
+    def _delete_as_of(self, period=None) -> None:
+        if period is None:
+            self._as_of_base = None
+            self._as_of_base_instant = None
+            self._as_of_patches = []
+            self._as_of_patch_instants = []
+            self._as_of_snapshots.clear()
+            self._as_of_transition_computed.clear()
+            self._as_of_known_periods.clear()
+            return
+
+        period = periods.period(period)
+        if (
+            self._as_of_base_instant is not None
+            and period.start <= self._as_of_base_instant <= period.stop
+        ):
+            self._delete_as_of()
+            return
+
+        retained_patches = [
+            patch
+            for patch in self._as_of_patches
+            if not period.start <= patch[0] <= period.stop
+        ]
+        self._as_of_patches = retained_patches
+        self._as_of_patch_instants = [patch[0] for patch in retained_patches]
+        self._as_of_snapshots.clear()
+        self._as_of_transition_computed = {
+            instant
+            for instant in self._as_of_transition_computed
+            if not period.start <= instant <= period.stop
+        }
+        self._as_of_known_periods = {
+            known_period
+            for known_period in self._as_of_known_periods
+            if not period.contains(known_period)
+        }
 
     def get_array(self, period):
         """Get the value of the variable for the given period.
@@ -110,7 +152,10 @@ class Holder:
         if self.variable.is_neutralized:
             return self.default_array()
         if self._as_of:
-            return self._get_as_of(periods.period(period))
+            period = periods.period(period)
+            if self.variable.end and period.start.date > self.variable.end:
+                return None
+            return self._get_as_of(period)
         value = self._memory_storage.get(period)
         if value is not None:
             return value
@@ -184,6 +229,7 @@ class Holder:
 
     def _set_as_of(self, period, value) -> None:
         instant = period.start
+        self._as_of_known_periods.add(period)
         self._as_of_transition_computed.add(self._as_of_reference_instant(period))
         if self._as_of_base is None:
             self._as_of_base = self._immutable_array(value)
@@ -250,12 +296,14 @@ class Holder:
             )
             raise IndexError(msg)
 
+        values = numpy.asarray(values)
+        scalar_value = values.ndim == 0
+        if scalar_value:
+            values = values.reshape(1)
         if self.variable.value_type == enums.Enum:
             values = self.variable.possible_values.encode(values)
-        else:
-            values = numpy.asarray(values)
-        if values.ndim == 0:
-            values = numpy.full(len(indices), values, dtype=self.variable.dtype)
+        if scalar_value:
+            values = numpy.full(len(indices), values[0], dtype=self.variable.dtype)
         if values.ndim != 1 or len(values) != len(indices):
             msg = (
                 "set_input_sparse values must be one-dimensional and match the "
@@ -273,6 +321,7 @@ class Holder:
 
         if len(indices) == 0:
             return
+        self._as_of_known_periods.add(period)
         previous = self._reconstruct_as_of(period.start)
         changed = values != previous[indices]
         if changed.any():
@@ -325,9 +374,30 @@ class Holder:
             dtype=self.variable.dtype,
         )
 
-        usage.update(self._memory_storage.get_memory_usage())
+        if self._as_of:
+            arrays = [self._as_of_base]
+            arrays.extend(
+                array
+                for _, indices, values in self._as_of_patches
+                for array in (indices, values)
+            )
+            arrays.extend(snapshot for snapshot, _ in self._as_of_snapshots.values())
+            unique_arrays = {
+                id(array): array for array in arrays if array is not None
+            }
+            usage.update(
+                {
+                    "nb_arrays": len(unique_arrays),
+                    "total_nb_bytes": sum(
+                        array.nbytes for array in unique_arrays.values()
+                    ),
+                    "cell_size": numpy.dtype(self.variable.dtype).itemsize,
+                },
+            )
+        else:
+            usage.update(self._memory_storage.get_memory_usage())
 
-        if self.simulation.trace:
+        if self.simulation and self.simulation.trace:
             nb_requests = self.simulation.tracer.get_nb_requests(self.variable.name)
             usage.update(
                 {
@@ -344,6 +414,8 @@ class Holder:
 
     def get_known_periods(self):
         """Get the list of periods the variable value is known for."""
+        if self._as_of:
+            return sorted(self._as_of_known_periods)
         return list(self._memory_storage.get_known_periods()) + list(
             self._disk_storage.get_known_periods() if self._disk_storage else [],
         )

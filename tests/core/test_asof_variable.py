@@ -5,6 +5,7 @@ import pytest
 
 from openfisca_core.entities import Entity
 from openfisca_core.holders import Holder, set_input_divide_by_period
+from openfisca_core.indexed_enums import Enum
 from openfisca_core.periods import DateUnit, period
 from openfisca_core.populations import Population
 from openfisca_core.variables import Variable
@@ -176,6 +177,30 @@ def test_set_input_sparse_broadcasts_scalar_and_ignores_unchanged_values():
     assert holder._as_of_patches == []
 
 
+def test_set_input_sparse_broadcasts_scalar_enum():
+    class Status(Enum):
+        inactive = "Inactive"
+        active = "Active"
+
+    class EnumState(Variable):
+        value_type = Enum
+        possible_values = Status
+        default_value = Status.inactive
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+    holder = make_holder(EnumState)
+    holder.set_input("2024-01", ["inactive", "inactive", "inactive"])
+    holder.set_input_sparse("2024-02", [0, 2], Status.active)
+
+    assert holder.get_array("2024-02").decode_to_str().tolist() == [
+        "active",
+        "inactive",
+        "active",
+    ]
+
+
 def test_set_input_sparse_requires_as_of_and_base():
     with pytest.raises(ValueError, match="only available for as_of"):
         make_holder(RegularVariable).set_input_sparse("2024-01", [0], [1])
@@ -276,3 +301,73 @@ def test_as_of_rejects_set_input_helper():
 
     with pytest.raises(ValueError, match="incompatible"):
         InvalidVariable()
+
+
+def test_as_of_rejects_eternity_definition_period():
+    class InvalidVariable(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.ETERNITY
+        as_of = True
+
+    with pytest.raises(ValueError, match="ETERNITY"):
+        InvalidVariable()
+
+
+def test_as_of_delete_arrays_removes_period_events():
+    holder = make_holder()
+    holder.set_input("2024-01", [1, 1, 1])
+    holder.set_input_sparse("2024-02", [0], [2])
+    holder.set_input_sparse("2024-03", [1], [3])
+
+    holder.delete_arrays("2024-02")
+
+    assert holder.get_known_periods() == [period("2024-01"), period("2024-03")]
+    numpy.testing.assert_array_equal(holder.get_array("2024-03"), [1, 3, 1])
+
+
+def test_as_of_delete_arrays_clears_dependent_history_with_base():
+    holder = make_holder()
+    holder.set_input("2024-01", [1, 1, 1])
+    holder.set_input_sparse("2024-02", [0], [2])
+
+    holder.delete_arrays("2024-01")
+
+    assert holder.get_known_periods() == []
+    assert holder.get_array("2024-02") is None
+
+
+def test_as_of_memory_usage_includes_base_patches_and_snapshots():
+    holder = make_holder(count=3)
+    holder.set_input("2024-01", [1, 1, 1])
+    holder.set_input_sparse("2024-02", [0], [2])
+    holder.get_array("2024-03")
+
+    arrays = [holder._as_of_base]
+    arrays.extend(
+        array
+        for _, indices, values in holder._as_of_patches
+        for array in (indices, values)
+    )
+    arrays.extend(array for array, _ in holder._as_of_snapshots.values())
+    unique_arrays = {id(array): array for array in arrays}
+
+    usage = holder.get_memory_usage()
+    assert usage["nb_arrays"] == len(unique_arrays)
+    assert usage["total_nb_bytes"] == sum(
+        array.nbytes for array in unique_arrays.values()
+    )
+
+
+def test_as_of_does_not_persist_past_variable_end():
+    class EndedState(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+        end = "2024-02-29"
+
+    holder = make_holder(EndedState)
+    holder.set_input("2024-02", [1, 2, 3])
+
+    assert holder.get_array("2024-03") is None
