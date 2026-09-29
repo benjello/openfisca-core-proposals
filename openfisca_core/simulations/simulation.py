@@ -630,6 +630,7 @@ class Simulation:
             if key not in ("debug", "trace", "tracer"):
                 new_dict[key] = value
 
+        new._data_storage_dir = None
         new.persons = self.persons.clone(new)
         new._calculation_stack = []
         setattr(new, new.persons.entity.key, new.persons)

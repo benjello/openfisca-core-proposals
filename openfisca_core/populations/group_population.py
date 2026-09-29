@@ -79,13 +79,21 @@ class GroupPopulation(Population):
         )
         return max(candidates, key=lambda item: item.start, default=None)
 
+    def _resolve_period(self, period):
+        if period is not None or self.simulation is None:
+            return period
+        calculation_stack = self.simulation._calculation_stack
+        return calculation_stack[-1] if calculation_stack else None
+
     def _get_members_entity_id(self, period=None):
+        period = self._resolve_period(period)
         snapshot_period = self._get_snapshot_period(period)
         if snapshot_period is None:
             return self._members_entity_id
         return self._members_entity_id_by_period[snapshot_period]
 
     def _get_members_role(self, period=None):
+        period = self._resolve_period(period)
         if period is None or not self._members_role_by_period:
             return self.members_role
 
@@ -105,6 +113,7 @@ class GroupPopulation(Population):
         return self._members_role_by_period[snapshot_period]
 
     def _get_members_position(self, period=None):
+        period = self._resolve_period(period)
         snapshot_period = self._get_snapshot_period(period)
         if snapshot_period is None:
             return self.members_position
@@ -117,6 +126,7 @@ class GroupPopulation(Population):
         return self._members_position_by_period[snapshot_period]
 
     def _get_ordered_members_map(self, period=None):
+        period = self._resolve_period(period)
         snapshot_period = self._get_snapshot_period(period)
         if snapshot_period is None:
             return self.ordered_members_map
@@ -199,7 +209,10 @@ class GroupPopulation(Population):
         the membership length follows the period's person count and group count
         becomes ``max(members_entity_id) + 1`` (or zero for no members).
         """
-        snapshot_period = periods.period(period)
+        snapshot_period = self._validate_snapshot_period(
+            period,
+            self._members_entity_id_by_period,
+        )
         array = numpy.asarray(members_entity_id)
         if array.ndim != 1:
             raise ValueError("members_entity_id must be a one-dimensional array")
@@ -274,11 +287,14 @@ class GroupPopulation(Population):
             if item.start > snapshot_period.start
         ]
         next_start = min(next_starts, default=None)
-        self._invalidate_period_caches(snapshot_period, next_start)
+        self._invalidate_structure_caches(snapshot_period, next_start)
 
     def set_roles_for_period(self, period, members_role) -> None:
         """Set member roles from ``period`` until the next role snapshot."""
-        snapshot_period = periods.period(period)
+        snapshot_period = self._validate_snapshot_period(
+            period,
+            self._members_role_by_period,
+        )
         membership = self._get_members_entity_id(snapshot_period)
         role_snapshot = self._validate_members_role(members_role, membership)
         role_snapshot.flags.writeable = False
@@ -289,12 +305,22 @@ class GroupPopulation(Population):
             for item in self._members_role_by_period
             if item.start > snapshot_period.start
         ]
-        self._invalidate_period_caches(
+        self._invalidate_structure_caches(
             snapshot_period,
             min(next_starts, default=None),
         )
 
+    def _invalidate_structure_caches(self, snapshot_period, next_start) -> None:
+        populations = (
+            self.simulation.populations.values()
+            if self.simulation is not None
+            else (self,)
+        )
+        for population in populations:
+            population._invalidate_period_caches(snapshot_period, next_start)
+
     def _members_have_role(self, role, period=None):
+        period = self._resolve_period(period)
         members_role = self._get_members_role(period)
         if role.subroles:
             return numpy.logical_or.reduce(
@@ -526,6 +552,7 @@ class GroupPopulation(Population):
         >>> array([3500])
 
         """
+        period = self._resolve_period(period)
         self.entity.check_role_validity(role)
         self._check_members_array(array, period)
         members_entity_id = self._get_members_entity_id(period)
@@ -568,6 +595,7 @@ class GroupPopulation(Population):
 
     @projectors.projectable
     def reduce(self, array, reducer, neutral_element, role=None, period=None):
+        period = self._resolve_period(period)
         self._check_members_array(array, period)
         self.entity.check_role_validity(role)
         position_in_entity = self._get_members_position(period)
@@ -682,6 +710,7 @@ class GroupPopulation(Population):
 
         If ``role`` is provided, only the entity member with the given role are taken into account.
         """
+        period = self._resolve_period(period)
         if role:
             role_condition = self._members_have_role(role, period)
             return self.sum(role_condition, period=period)
@@ -707,6 +736,7 @@ class GroupPopulation(Population):
 
         The result is a vector which dimension is the number of entities
         """
+        period = self._resolve_period(period)
         self.entity.check_role_validity(role)
         if role.max != 1:
             msg = f"You can only use value_from_person with a role that is unique in {self.key}. Role {role.key} is not unique."
@@ -740,6 +770,7 @@ class GroupPopulation(Population):
 
         The result is a vector which dimension is the number of entities.
         """
+        period = self._resolve_period(period)
         self._check_members_array(array, period)
         positions = self._get_members_position(period)
         nb_persons_per_entity = self.nb_persons(period=period)
@@ -770,6 +801,7 @@ class GroupPopulation(Population):
     # Projection entity -> person(s)
 
     def project(self, array, role=None, period=None):
+        period = self._resolve_period(period)
         self._check_group_array(array, period)
         self.entity.check_role_validity(role)
         members_entity_id = self._get_members_entity_id(period)

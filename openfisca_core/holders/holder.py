@@ -33,6 +33,8 @@ class Holder:
         self.simulation = population.simulation
         self._eternal = self.variable.definition_period == periods.DateUnit.ETERNITY
         self._memory_storage = storage.InMemoryStorage(is_eternal=self._eternal)
+        self._input_periods = set()
+        self._is_setting_input = False
 
         # By default, do not activate on-disk storage, or variable dropping
         self._disk_storage = None
@@ -50,16 +52,13 @@ class Holder:
 
     def clone(self, population: t.CorePopulation) -> t.Holder:
         """Copy the holder just enough to be able to run a new simulation without modifying the original simulation."""
-        new = commons.empty_clone(self)
-        new_dict = new.__dict__
-
-        for key, value in self.__dict__.items():
-            if key not in ("population", "formula", "simulation"):
-                new_dict[key] = value
-
-        new_dict["population"] = population
-        new_dict["simulation"] = population.simulation
-
+        new = self.__class__(self.variable, population)
+        new._do_not_store = self._do_not_store
+        new._input_periods = set(self._input_periods)
+        for period in self.get_known_periods():
+            value = self.get_array(period)
+            if value is not None:
+                new._memory_storage.put(value.copy(), period)
         return new
 
     def create_disk_storage(self, directory=None, preserve=False):
@@ -82,6 +81,15 @@ class Holder:
         self._memory_storage.delete(period)
         if self._disk_storage:
             self._disk_storage.delete(period)
+        if period is None:
+            self._input_periods.clear()
+        else:
+            period = periods.period(period)
+            self._input_periods = {
+                known_period
+                for known_period in self._input_periods
+                if not period.contains(known_period)
+            }
 
     def get_array(self, period):
         """Get the value of the variable for the given period.
@@ -238,9 +246,13 @@ class Holder:
             return warnings.warn(warning_message, Warning, stacklevel=2)
         if self.variable.value_type in (float, int) and isinstance(array, str):
             array = commons.eval_expression(array)
-        if self.variable.set_input:
-            return self.variable.set_input(self, period, array)
-        return self._set(period, array)
+        self._is_setting_input = True
+        try:
+            if self.variable.set_input:
+                return self.variable.set_input(self, period, array)
+            return self._set(period, array)
+        finally:
+            self._is_setting_input = False
 
     def _to_array(self, value, period=None):
         if not isinstance(value, numpy.ndarray):
@@ -314,6 +326,8 @@ class Holder:
             self._disk_storage.put(value, period)
         else:
             self._memory_storage.put(value, period)
+        if self._is_setting_input:
+            self._input_periods.add(periods.period(period))
 
     def put_in_cache(self, value, period) -> None:
         if self._do_not_store:

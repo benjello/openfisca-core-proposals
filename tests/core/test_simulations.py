@@ -57,6 +57,13 @@ def test_clone(tax_benefit_system) -> None:
     assert salary_holder_clone.simulation == simulation_clone
     assert salary_holder_clone.population == simulation_clone.persons
 
+    clone_salary = salary_holder_clone.get_array("2017-01")
+    clone_salary[0] = 1
+    assert salary_holder.get_array("2017-01")[0] == 3000
+
+    salary_holder_clone.delete_arrays("2017-01")
+    assert salary_holder.get_array("2017-01") is not None
+
 
 def test_get_memory_usage(tax_benefit_system) -> None:
     simulation = SimulationBuilder().build_from_entities(tax_benefit_system, single)
