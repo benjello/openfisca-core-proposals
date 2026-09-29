@@ -102,6 +102,64 @@ def test_as_of_clone_has_independent_patch_index():
     numpy.testing.assert_array_equal(clone.get_array("2024-02"), [4, 2, 3])
 
 
+def test_as_of_snapshots_are_bounded_fifo():
+    class TwoSnapshotVariable(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = "start"
+        snapshot_count = 2
+
+    holder = make_holder(TwoSnapshotVariable)
+    holder.set_input("2024-01", [1, 1, 1])
+    holder.set_input("2024-02", [2, 2, 2])
+
+    # Reading the oldest entry must not promote it as an LRU cache would.
+    holder.get_array("2024-01")
+    holder.set_input("2024-03", [3, 3, 3])
+
+    assert list(holder._as_of_snapshots) == [
+        period("2024-02").start,
+        period("2024-03").start,
+    ]
+
+
+def test_as_of_retroactive_write_invalidates_later_snapshots():
+    holder = make_holder()
+    holder.set_input("2024-01", [1, 1, 1])
+    holder.set_input("2024-03", [1, 3, 1])
+    holder.get_array("2024-04")
+
+    holder.set_input("2024-02", [2, 1, 1])
+
+    assert period("2024-03").start not in holder._as_of_snapshots
+    assert period("2024-04").start not in holder._as_of_snapshots
+    numpy.testing.assert_array_equal(holder.get_array("2024-04"), [1, 3, 1])
+
+
+def test_as_of_snapshots_support_forward_and_backward_access():
+    holder = make_holder()
+    holder.set_input("2024-01", [1, 1, 1])
+    holder.set_input("2024-03", [3, 1, 1])
+    holder.set_input("2024-05", [5, 1, 1])
+
+    numpy.testing.assert_array_equal(holder.get_array("2024-06"), [5, 1, 1])
+    numpy.testing.assert_array_equal(holder.get_array("2024-02"), [1, 1, 1])
+    numpy.testing.assert_array_equal(holder.get_array("2024-04"), [3, 1, 1])
+
+
+def test_snapshot_count_must_be_positive():
+    class InvalidVariable(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = "start"
+        snapshot_count = 0
+
+    with pytest.raises(ValueError, match="snapshot_count.*positive"):
+        InvalidVariable()
+
+
 def test_as_of_end_uses_period_end_for_lookup():
     class AsOfEndVariable(Variable):
         value_type = int
