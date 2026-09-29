@@ -209,10 +209,7 @@ class GroupPopulation(Population):
         the membership length follows the period's person count and group count
         becomes ``max(members_entity_id) + 1`` (or zero for no members).
         """
-        snapshot_period = self._validate_snapshot_period(
-            period,
-            self._members_entity_id_by_period,
-        )
+        snapshot_period = self._validate_structure_period(period)
         array = numpy.asarray(members_entity_id)
         if array.ndim != 1:
             raise ValueError("members_entity_id must be a one-dimensional array")
@@ -243,9 +240,14 @@ class GroupPopulation(Population):
             )
 
         if members_role is None:
-            current_roles = self._get_members_role(snapshot_period)
+            current_roles = self._carry_forward_roles(snapshot_period)
+            if any(role is None for role in current_roles):
+                raise ValueError(
+                    "members_role is required for new members; call "
+                    "auto_assign_roles_for_period for explicit assignment",
+                )
             if len(current_roles) == len(array):
-                role_snapshot = None
+                role_snapshot = self._validate_members_role(current_roles, array)
             elif len(self.entity.flattened_roles) == 1 or array.size == 0:
                 role_snapshot = numpy.repeat(
                     self.entity.flattened_roles[0],
@@ -291,10 +293,7 @@ class GroupPopulation(Population):
 
     def set_roles_for_period(self, period, members_role) -> None:
         """Set member roles from ``period`` until the next role snapshot."""
-        snapshot_period = self._validate_snapshot_period(
-            period,
-            self._members_role_by_period,
-        )
+        snapshot_period = self._validate_structure_period(period)
         membership = self._get_members_entity_id(snapshot_period)
         role_snapshot = self._validate_members_role(members_role, membership)
         role_snapshot.flags.writeable = False
@@ -318,6 +317,42 @@ class GroupPopulation(Population):
         )
         for population in populations:
             population._invalidate_period_caches(snapshot_period, next_start)
+
+    def _validate_structure_period(self, period):
+        snapshots = {
+            **self._members_entity_id_by_period,
+            **self._members_role_by_period,
+        }
+        if self._dynamic:
+            snapshots.update(self._period_index)
+        return self._validate_snapshot_period(period, snapshots)
+
+    def _get_previous_structure_period(self, period):
+        target_period = periods.period(period)
+        candidates = [
+            snapshot_period
+            for snapshot_period in (
+                *self._members_entity_id_by_period,
+                *self._members_role_by_period,
+                *self.members._period_index,
+            )
+            if snapshot_period.start < target_period.start
+        ]
+        return max(candidates, key=lambda item: item.start, default=None)
+
+    def _carry_forward_roles(self, period):
+        source_period = self._get_previous_structure_period(period)
+        if source_period is None:
+            return self.members_role
+        old_roles = numpy.asarray(self._get_members_role(source_period), dtype=object)
+        if self.members._dynamic:
+            old_roles = self.members.remap_array(
+                old_roles,
+                source_period,
+                period,
+                default=None,
+            )
+        return old_roles
 
     def _members_have_role(self, role, period=None):
         period = self._resolve_period(period)
@@ -378,17 +413,9 @@ class GroupPopulation(Population):
             group_count = self.count
 
         if previous_period is None:
-            target_period = periods.period(period)
-            identity_periods = [
-                item
-                for item in self.members._period_index
-                if item.start < target_period.start
-            ]
-            source_period = max(
-                identity_periods,
-                key=lambda item: item.start,
-                default=target_period,
-            )
+            source_period = self._get_previous_structure_period(period)
+            if source_period is None:
+                source_period = periods.period(period)
         else:
             source_period = periods.period(previous_period)
         old_membership = self._get_members_entity_id(source_period)
@@ -458,8 +485,7 @@ class GroupPopulation(Population):
 
         role_array = numpy.asarray(roles, dtype=object)
         result = role_array[result_indices]
-
-        return result
+        return self._validate_members_role(result, new_membership)
 
     @property
     def members_position(self):
