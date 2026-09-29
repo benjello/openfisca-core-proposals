@@ -78,6 +78,15 @@ def test_implicit_link_keeps_projector_shortcuts_working(simulation):
     )
 
 
+def test_implicit_link_remains_compatible_with_get_rank(simulation):
+    salaries = simulation.persons("salary", "2024")
+
+    numpy.testing.assert_array_equal(
+        simulation.persons.get_rank(simulation.persons.household, salaries),
+        [0, 1, 0],
+    )
+
+
 def test_implicit_membership_rows_are_not_public_group_ids(simulation):
     simulation.household.ids = numpy.array([1, 0])
 
