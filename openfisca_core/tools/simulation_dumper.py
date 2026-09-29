@@ -50,7 +50,11 @@ def restore_simulation(directory, tax_benefit_system, **kwargs):
         if not population.entity.is_person:
             continue
         _restore_entity(population, entities_dump_dir)
-        population.count = person_count
+        if population._dynamic:
+            latest = max(population._period_index, key=lambda period: period.start)
+            population.count = population._period_index[latest]["count"]
+        else:
+            population.count = person_count
 
     variables_to_restore = (
         variable for variable in os.listdir(directory) if variable != "__entities__"

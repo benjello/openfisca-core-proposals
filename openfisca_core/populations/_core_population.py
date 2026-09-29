@@ -148,28 +148,37 @@ class CorePopulation:
         self.entity.check_variable_defined_for_entity(calculate.variable)
         self.check_period_validity(calculate.variable, calculate.period)
 
+        result = None
+        result_period = calculate.period
         if not isinstance(calculate.option, Sequence):
-            return self.simulation.calculate(
+            result = self.simulation.calculate(
                 calculate.variable,
                 calculate.period,
             )
-
-        if t.Option.ADD in calculate.option and t.Option.DIVIDE in calculate.option:
+        elif t.Option.ADD in calculate.option and t.Option.DIVIDE in calculate.option:
             raise IncompatibleOptionsError(variable_name)
-
-        if t.Option.ADD in calculate.option:
-            return self.simulation.calculate_add(
+        elif t.Option.ADD in calculate.option:
+            result = self.simulation.calculate_add(
                 calculate.variable,
                 calculate.period,
             )
-
-        if t.Option.DIVIDE in calculate.option:
-            return self.simulation.calculate_divide(
+            variable = self.entity.get_variable(calculate.variable)
+            result_period = calculate.period.get_subperiods(
+                variable.definition_period,
+            )[-1]
+        elif t.Option.DIVIDE in calculate.option:
+            result = self.simulation.calculate_divide(
                 calculate.variable,
                 calculate.period,
             )
+        else:
+            raise InvalidOptionError(calculate.option[0], variable_name)
 
-        raise InvalidOptionError(calculate.option[0], variable_name)
+        return self._remap_to_outer_period(
+            result,
+            calculate.variable,
+            result_period,
+        )
 
     def empty_array(self) -> t.FloatArray:
         """Return an empty array.
@@ -467,6 +476,74 @@ class CorePopulation:
         self._permanent_ids = permanent_ids.copy()
         self._set_period_identity_snapshot(period, permanent_ids)
 
+    def register_births(self, period: t.PeriodLike, permanent_ids) -> None:
+        """Register explicit new permanent IDs as alive from ``period``.
+
+        This does not assign the new persons to groups. Call each group
+        population's :meth:`set_members_for_period` explicitly afterwards.
+        """
+        self._check_person_lifecycle()
+        new_ids = self._validate_lifecycle_ids(permanent_ids, "birth")
+        known_ids = (
+            numpy.array([], dtype=numpy.intp)
+            if self._permanent_ids is None
+            else self._permanent_ids
+        )
+        already_known = numpy.intersect1d(new_ids, known_ids)
+        if already_known.size:
+            raise ValueError(
+                f"Cannot register already known permanent IDs: {already_known.tolist()}",
+            )
+
+        snapshot_period = periods.period(period)
+        alive_ids = self._get_alive_ids_for_period(snapshot_period)
+        self._permanent_ids = numpy.sort(numpy.concatenate((known_ids, new_ids)))
+        self._set_period_identity_snapshot(
+            snapshot_period,
+            numpy.concatenate((alive_ids, new_ids)),
+        )
+        self._invalidate_lifecycle_caches(snapshot_period)
+
+    def register_deaths(self, period: t.PeriodLike, permanent_ids) -> None:
+        """Register explicit permanent IDs as absent from ``period`` onward."""
+        self._check_person_lifecycle()
+        dead_ids = self._validate_lifecycle_ids(permanent_ids, "death")
+        known_ids = (
+            numpy.array([], dtype=numpy.intp)
+            if self._permanent_ids is None
+            else self._permanent_ids
+        )
+        unknown_ids = numpy.setdiff1d(dead_ids, known_ids)
+        if unknown_ids.size:
+            raise ValueError(f"Unknown permanent IDs: {unknown_ids.tolist()}")
+
+        snapshot_period = periods.period(period)
+        alive_ids = self._get_alive_ids_for_period(snapshot_period)
+        not_alive = numpy.setdiff1d(dead_ids, alive_ids)
+        if not_alive.size:
+            raise ValueError(
+                f"Permanent IDs are not alive at {snapshot_period}: "
+                f"{not_alive.tolist()}",
+            )
+        self._set_period_identity_snapshot(
+            snapshot_period,
+            alive_ids[~numpy.isin(alive_ids, dead_ids)],
+        )
+        self._invalidate_lifecycle_caches(snapshot_period)
+
+    def _check_person_lifecycle(self) -> None:
+        if not self._dynamic:
+            raise ValueError("activate_dynamic_mode must be called first")
+        if not self.entity.is_person:
+            raise ValueError("Births and deaths are only supported for persons")
+
+    @classmethod
+    def _validate_lifecycle_ids(cls, permanent_ids, event):
+        if numpy.asarray(permanent_ids).size == 0:
+            raise ValueError(f"{event} permanent_ids cannot be empty")
+        ids = cls._validate_permanent_ids(permanent_ids)
+        return ids
+
     @staticmethod
     def _validate_permanent_ids(permanent_ids, expected_count=None):
         ids = numpy.asarray(permanent_ids)
@@ -501,15 +578,29 @@ class CorePopulation:
             "count": len(permanent_ids),
             "id_to_rownum": id_to_rownum,
         }
-        self._id_to_rownum = id_to_rownum
+        latest_period = max(self._period_index, key=lambda item: item.start)
+        latest = self._period_index[latest_period]
+        self._id_to_rownum = latest["id_to_rownum"]
+        self.count = latest["count"]
 
     def snapshot_period(self, period: t.PeriodLike) -> None:
         """Snapshot the current row ordering for ``period``."""
-        if self._permanent_ids is None:
+        if self._id_to_rownum is None:
             permanent_ids = numpy.arange(self.count, dtype=numpy.intp)
         else:
-            permanent_ids = self._permanent_ids
+            permanent_ids = self._ids_by_row(self._id_to_rownum)
         self._set_period_identity_snapshot(period, permanent_ids)
+
+    @staticmethod
+    def _ids_by_row(id_to_rownum):
+        alive_ids = numpy.flatnonzero(id_to_rownum >= 0)
+        return alive_ids[numpy.argsort(id_to_rownum[alive_ids])].astype(numpy.intp)
+
+    def _get_alive_ids_for_period(self, period):
+        snapshot = self._get_period_identity_snapshot(period)
+        if snapshot is None:
+            return numpy.arange(self.count, dtype=numpy.intp)
+        return self._ids_by_row(snapshot["id_to_rownum"])
 
     def _get_period_identity_snapshot(self, period):
         if not self._period_index:
@@ -556,6 +647,45 @@ class CorePopulation:
         if isinstance(array, indexed_enums.EnumArray):
             return indexed_enums.EnumArray(result, array.possible_values)
         return result
+
+    def _invalidate_period_caches(self, snapshot_period, next_start=None) -> None:
+        if next_start is None:
+            next_starts = [
+                item.start
+                for item in self._period_index
+                if item.start > snapshot_period.start
+            ]
+            next_start = min(next_starts, default=None)
+        for holder in self._holders.values():
+            for known_period in list(holder.get_known_periods()):
+                if known_period.start < snapshot_period.start:
+                    continue
+                if next_start is None or known_period.start < next_start:
+                    holder.delete_arrays(known_period)
+
+    def _invalidate_lifecycle_caches(self, snapshot_period) -> None:
+        populations = (
+            self.simulation.populations.values()
+            if self.simulation is not None
+            else (self,)
+        )
+        for population in populations:
+            population._invalidate_period_caches(snapshot_period)
+
+    def _remap_to_outer_period(self, result, variable_name, result_period):
+        if not self._dynamic or result is None or self.simulation is None:
+            return result
+        calculation_stack = self.simulation._calculation_stack
+        if not calculation_stack:
+            return result
+        outer_period = calculation_stack[-1]
+        variable = self.entity.get_variable(variable_name)
+        return self.remap_array(
+            result,
+            result_period,
+            outer_period,
+            variable.default_value,
+        )
 
 
 __all__ = ["CorePopulation"]
