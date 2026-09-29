@@ -59,7 +59,7 @@ dev_requirements = [
     "colorama >=0.4.4, <0.5",
     "mypy >=1.11.2, <2.0",
     "openapi-spec-validator >=0.7.1, <0.8.0",
-    "ruff >=0.6.9, <1.0",
+    "ruff >=0.6.9, <0.16",
     *api_requirements,
 ]
 
