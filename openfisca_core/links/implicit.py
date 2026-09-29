@@ -54,8 +54,13 @@ class ImplicitMany2OneLink(Many2OneLink):
 class ImplicitOne2ManyLink(One2ManyLink):
     """A group-to-person link backed by ``members_entity_id``."""
 
-    def __init__(self, name: str, group_entity_key: str) -> None:
-        super().__init__(name, "", "person")
+    def __init__(
+        self,
+        name: str,
+        group_entity_key: str,
+        person_entity_key: str,
+    ) -> None:
+        super().__init__(name, "", person_entity_key)
         self.group_entity_key = group_entity_key
 
     def _source_rows(self, period) -> numpy.ndarray:

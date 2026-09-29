@@ -90,7 +90,7 @@ class Simulation:
         """Create simulation-local bindings for declared and group links."""
         for population in self.populations.values():
             population.links = {}
-            for name, link in population.entity.links.items():
+            for name, link in getattr(population.entity, "links", {}).items():
                 bound_link = copy(link)
                 bound_link.attach(population)
                 bound_link.resolve(self.populations)
@@ -115,7 +115,11 @@ class Simulation:
 
             persons_link_name = self.persons.entity.plural
             if persons_link_name not in group_population.links:
-                link = ImplicitOne2ManyLink(persons_link_name, group_key)
+                link = ImplicitOne2ManyLink(
+                    persons_link_name,
+                    group_key,
+                    self.persons.entity.key,
+                )
                 link.attach(group_population)
                 link.resolve(self.populations)
                 group_population.links[persons_link_name] = link
