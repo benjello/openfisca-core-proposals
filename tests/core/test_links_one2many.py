@@ -3,6 +3,7 @@ import pytest
 
 from openfisca_core import entities, periods, taxbenefitsystems, variables
 from openfisca_core.links import One2ManyLink
+from openfisca_core.links.link import LinkResolutionError
 from openfisca_core.simulations import SimulationBuilder
 
 
@@ -30,7 +31,12 @@ def simulation():
         definition_period = periods.ETERNITY
         default_value = -1
 
-    for variable in (salary, household_id):
+    class rent(variables.Variable):
+        value_type = int
+        entity = household
+        definition_period = periods.YEAR
+
+    for variable in (salary, household_id, rent):
         tax_benefit_system.add_variable(variable)
 
     result = SimulationBuilder().build_from_dict(
@@ -67,3 +73,8 @@ def test_one2many_boolean_aggregations(simulation):
 
     numpy.testing.assert_array_equal(link.any("salary", "2024"), [True, True, False])
     numpy.testing.assert_array_equal(link.all("salary", "2024"), [True, True, True])
+
+
+def test_one2many_rejects_variables_from_another_entity(simulation):
+    with pytest.raises(LinkResolutionError, match="defined for 'households'"):
+        simulation.household.residents.sum("rent", "2024")
