@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import warnings
 from collections.abc import Mapping
+from copy import copy
 from typing import NamedTuple
 
 import numpy
@@ -49,6 +50,7 @@ class Simulation:
         self.persons = self.populations[tax_benefit_system.person_entity.key]
         self.link_to_entities_instances()
         self.create_shortcuts()
+        self._resolve_links()
 
         self.invalidated_caches = set()
 
@@ -83,6 +85,16 @@ class Simulation:
         for population in self.populations.values():
             # create shortcut simulation.person and simulation.household (for instance)
             setattr(self, population.entity.key, population)
+
+    def _resolve_links(self) -> None:
+        """Create simulation-local bindings for explicitly declared links."""
+        for population in self.populations.values():
+            population.links = {}
+            for name, link in population.entity.links.items():
+                bound_link = copy(link)
+                bound_link.attach(population)
+                bound_link.resolve(self.populations)
+                population.links[name] = bound_link
 
     @property
     def data_storage_dir(self):
