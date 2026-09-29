@@ -26,11 +26,11 @@ def calculate(tax_benefit_system, input_data: dict) -> dict:
 
         if variable.value_type == Enum:
             entity_result = result.decode()[entity_index].name
-        elif variable.value_type == float:
+        elif variable.value_type is float:
             entity_result = float(
                 str(result[entity_index]),
             )  # To turn the float32 into a regular float without adding confusing extra decimals. There must be a better way.
-        elif variable.value_type == str:
+        elif variable.value_type is str:
             entity_result = str(result[entity_index])
         else:
             entity_result = result.tolist()[entity_index]
