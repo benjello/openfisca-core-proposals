@@ -232,7 +232,8 @@ def _restore_entity(population, directory):
                 role_snapshot
             )
     person_count = len(population.members_entity_id)
-    population.count = max(population.members_entity_id) + 1
+    if not population._dynamic:
+        population.count = max(population.members_entity_id) + 1
     return person_count
 
 
