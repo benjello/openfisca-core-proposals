@@ -20,10 +20,11 @@ class GroupPopulation(Population):
         self._ordered_members_map = None
 
     def clone(self, simulation):
-        result = GroupPopulation(self.entity, self.members)
+        result = GroupPopulation(self.entity, simulation.persons)
         result.simulation = simulation
         result._holders = {
-            variable: holder.clone(self) for (variable, holder) in self._holders.items()
+            variable: holder.clone(result)
+            for (variable, holder) in self._holders.items()
         }
         result.count = self.count
         result.ids = self.ids
