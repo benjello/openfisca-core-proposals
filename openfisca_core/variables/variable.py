@@ -122,7 +122,7 @@ class Variable:
                 required=True,
                 setter=self.set_possible_values,
             )
-        if self.value_type == str:
+        if self.value_type is str:
             self.max_length = self.set(attr, "max_length", allowed_type=int)
             if self.max_length:
                 self.dtype = f"|S{self.max_length}"
@@ -221,7 +221,7 @@ class Variable:
             and value is not None
             and not isinstance(value, allowed_type)
         ):
-            if allowed_type == float and isinstance(value, int):
+            if allowed_type is float and isinstance(value, int):
                 value = float(value)
             else:
                 msg = f"Invalid value '{value}' for attribute '{attribute_name}' in variable '{self.name}'. Must be of type '{allowed_type}'."
