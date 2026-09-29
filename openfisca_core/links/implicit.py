@@ -7,7 +7,7 @@ import numpy
 from openfisca_core import projectors
 
 from .link import _role_matches
-from .many2one import Many2OneLink
+from .many2one import Many2OneLink, _ChainedLink
 from .one2many import One2ManyLink
 
 
@@ -63,6 +63,9 @@ class ImplicitMany2OneLink(Many2OneLink):
     def __getattr__(self, name: str):
         if name.startswith("_"):
             raise AttributeError(name)
+        target_link = self._target_population.links.get(name)
+        if isinstance(target_link, Many2OneLink):
+            return _ChainedLink((self, target_link))
         target_attribute = getattr(self._target_population, name)
         function = getattr(target_attribute, "__func__", target_attribute)
         if isinstance(target_attribute, projectors.Projector) or getattr(
