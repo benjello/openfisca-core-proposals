@@ -66,11 +66,12 @@ class employment_status(Variable):
         return changes, numpy.where(changes, 2, previous)[changes]
 ```
 
-The initial formula runs before any transition when no state exists. Explicit
-inputs take precedence at their period. Reading the same variable at an earlier
-period from a transition is supported; an exact variable-period cycle is
-stopped and leaves the previous state unchanged. Regular `formula` and
-`transition_formula` declarations are mutually exclusive.
+The initial formula runs before any transition when no state exists. It must
+produce that first complete state rather than recursively search earlier
+periods for one; such recursion raises `CycleError`. Explicit inputs take
+precedence at their period. A transition can read the same variable at an
+earlier period, while exact-period and future recursion raise `CycleError`.
+Regular `formula` and `transition_formula` declarations are mutually exclusive.
 
 Both formula families support dated variants such as
 `initial_formula_2025_01` and `transition_formula_2025_01`.
