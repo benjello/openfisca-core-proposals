@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import numpy
 
-from openfisca_core import errors, indexed_enums
+from openfisca_core import errors, indexed_enums, periods
 
-from .link import Link, LinkResolutionError
+from .link import Link, LinkResolutionError, _role_matches
 
 
 class Many2OneLink(Link):
@@ -60,6 +60,60 @@ class Many2OneLink(Link):
 
     def __call__(self, variable_name: str, period) -> numpy.ndarray:
         return self.get(variable_name, period)
+
+    @property
+    def role(self) -> numpy.ndarray | None:
+        """Return source roles for this link, when configured."""
+        if self.role_field is None:
+            return None
+        return self._get_roles(periods.ETERNITY)
+
+    def _get_roles(self, period) -> numpy.ndarray:
+        try:
+            return self._source_population(self.role_field, period)
+        except (errors.CycleError, errors.SpiralError):
+            raise
+        except Exception as error:
+            message = (
+                f"Link '{self.name}' could not read role field "
+                f"'{self.role_field}': {error}"
+            )
+            raise LinkResolutionError(message) from error
+
+    def has_role(self, role_value, period=periods.ETERNITY) -> numpy.ndarray:
+        """Return which source rows have the requested role."""
+        if self.role_field is None:
+            message = f"Link '{self.name}' has no role_field"
+            raise ValueError(message)
+        return _role_matches(self._get_roles(period), role_value)
+
+    def get_by_role(self, variable_name: str, period, *, role_value) -> numpy.ndarray:
+        """Project values only for source rows with the requested role."""
+        result = self.get(variable_name, period)
+        variable = self._source_population.simulation.tax_benefit_system.get_variable(
+            variable_name
+        )
+        default = variable.default_value if variable is not None else 0
+        if isinstance(default, indexed_enums.Enum):
+            default = default.index
+        filtered = result.copy()
+        filtered[~self.has_role(role_value, period)] = default
+        return filtered
+
+    def rank(self, variable_name: str, period, *, condition=True) -> numpy.ndarray:
+        """Rank source members within the linked group population."""
+        target = self._target_population
+        if (
+            not hasattr(target, "members_position")
+            or target.members is not self._source_population
+        ):
+            message = (
+                f"Link '{self.name}' rank requires its target to group "
+                "its source population"
+            )
+            raise ValueError(message)
+        criteria = self._source_population(variable_name, period)
+        return self._source_population.get_rank(target, criteria, condition=condition)
 
 
 __all__ = ["Many2OneLink"]
