@@ -285,6 +285,24 @@ def test_initial_formula_backward_recursion_without_base_is_rejected():
     assert simulation.tracer.stack == []
 
 
+def test_initial_formula_backward_recursion_with_only_future_base_is_rejected():
+    class State(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+        def initial_formula(person, period):  # noqa: N805
+            return person("State", period.last_month)
+
+    simulation = make_simulation(State)
+    simulation.set_input("State", "2024-03", [3, 3, 3])
+
+    with pytest.raises(CycleError, match="initial formula.*without an existing state"):
+        simulation.calculate("State", "2024-01")
+    assert simulation.tracer.stack == []
+
+
 def test_initial_formula_calculation_clears_final_stack():
     class State(Variable):
         value_type = int
@@ -376,8 +394,57 @@ def test_retroactive_input_recalculates_future_transitions():
         [11, 11, 11],
     )
     holder = simulation.get_holder("State")
-    assert holder._as_of_patch_sources == ["explicit", "calculated"]
+    assert holder._as_of_patch_sources == ["explicit_dense", "calculated"]
     assert len(calls) == 3
+
+
+def test_future_dense_input_still_replaces_after_retroactive_invalidation():
+    class State(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+        def transition_formula(person, period):  # noqa: N805
+            previous = person("State", period.last_month)
+            return numpy.arange(3), previous + 1
+
+    simulation = make_simulation(State)
+    simulation.set_input("State", "2024-01", [0, 0, 0])
+    simulation.set_input("State", "2024-03", [10, 0, 0])
+    numpy.testing.assert_array_equal(
+        simulation.calculate("State", "2024-04"),
+        [11, 1, 1],
+    )
+
+    simulation.set_input("State", "2024-02", [5, 5, 5])
+
+    numpy.testing.assert_array_equal(
+        simulation.calculate("State", "2024-04"),
+        [11, 1, 1],
+    )
+
+
+def test_future_dense_input_survives_invalidated_calculated_base():
+    class State(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+        def initial_formula(person, period):  # noqa: N805
+            return person.filled_array(0)
+
+    simulation = make_simulation(State)
+    simulation.calculate("State", "2024-01")
+    simulation.set_input("State", "2024-03", [10, 0, 0])
+
+    simulation.set_input("State", "2023-12", [5, 5, 5])
+
+    numpy.testing.assert_array_equal(
+        simulation.calculate("State", "2024-03"),
+        [10, 0, 0],
+    )
 
 
 def test_deleting_historical_period_recalculates_future_transitions():

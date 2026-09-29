@@ -50,27 +50,39 @@ def test_as_of_returns_none_before_first_state():
     assert holder.get_array("2024-01") is None
 
 
-def test_as_of_dense_inputs_replace_all_values():
+def test_as_of_dense_input_stores_a_complete_replacement():
     holder = make_holder()
     holder.set_input("2024-01", [1, 2, 3])
     holder.set_input("2024-02", [1, 8, 3])
-    holder.set_input("2024-03", [1, 8, 3])
 
-    assert len(holder._as_of_patches) == 2
+    assert len(holder._as_of_patches) == 1
     _, indices, values = holder._as_of_patches[0]
     numpy.testing.assert_array_equal(indices, [0, 1, 2])
     numpy.testing.assert_array_equal(values, [1, 8, 3])
+    assert holder._as_of_base_source == "explicit_dense"
+    assert holder._as_of_patch_sources == ["explicit_dense"]
 
 
-def test_as_of_reconstructs_retroactive_state():
+def test_as_of_reconstructs_retroactive_sparse_state():
     holder = make_holder()
     holder.set_input("2024-01", [10, 20, 30])
-    holder.set_input("2024-03", [10, 21, 30])
+    holder.set_input_sparse("2024-03", [1], [21])
     holder.set_input("2024-02", [11, 20, 30])
 
     numpy.testing.assert_array_equal(holder.get_array("2024-01"), [10, 20, 30])
     numpy.testing.assert_array_equal(holder.get_array("2024-02"), [11, 20, 30])
-    numpy.testing.assert_array_equal(holder.get_array("2024-03"), [10, 21, 30])
+    numpy.testing.assert_array_equal(holder.get_array("2024-03"), [11, 21, 30])
+
+
+def test_future_dense_input_replaces_retroactively_changed_state():
+    holder = make_holder()
+    holder.set_input("2024-01", [1, 2, 3])
+    holder.set_input("2024-03", [1, 9, 3])
+
+    holder.set_input("2024-02", [4, 5, 6])
+
+    numpy.testing.assert_array_equal(holder.get_array("2024-02"), [4, 5, 6])
+    numpy.testing.assert_array_equal(holder.get_array("2024-03"), [1, 9, 3])
 
 
 def test_as_of_accepts_state_before_initial_base():
@@ -128,14 +140,14 @@ def test_as_of_snapshots_are_bounded_fifo():
 def test_as_of_retroactive_write_invalidates_later_snapshots():
     holder = make_holder()
     holder.set_input("2024-01", [1, 1, 1])
-    holder.set_input("2024-03", [1, 3, 1])
+    holder.set_input_sparse("2024-03", [1], [3])
     holder.get_array("2024-04")
 
     holder.set_input("2024-02", [2, 1, 1])
 
     assert period("2024-03").start not in holder._as_of_snapshots
     assert period("2024-04").start not in holder._as_of_snapshots
-    numpy.testing.assert_array_equal(holder.get_array("2024-04"), [1, 3, 1])
+    numpy.testing.assert_array_equal(holder.get_array("2024-04"), [2, 3, 1])
 
 
 def test_as_of_snapshots_support_forward_and_backward_access():
@@ -167,6 +179,7 @@ def test_set_input_sparse_updates_selected_values():
     holder.set_input_sparse("2024-02", [0, 2], [10, 30])
 
     numpy.testing.assert_array_equal(holder.get_array("2024-02"), [10, 2, 30])
+    assert holder._as_of_patch_sources == ["explicit_sparse"]
 
 
 def test_set_input_sparse_broadcasts_scalar_and_ignores_unchanged_values():
@@ -335,6 +348,32 @@ def test_as_of_delete_arrays_clears_dependent_history_with_base():
 
     assert holder.get_known_periods() == []
     assert holder.get_array("2024-02") is None
+
+
+def test_as_of_delete_base_promotes_next_dense_input():
+    holder = make_holder()
+    holder.set_input("2024-01", [1, 1, 1])
+    holder.set_input_sparse("2024-02", [1], [2])
+    holder.set_input("2024-03", [3, 2, 1])
+    holder.set_input_sparse("2024-04", [0], [4])
+
+    holder.delete_arrays("2024-01")
+
+    assert holder.get_known_periods() == [period("2024-03"), period("2024-04")]
+    assert holder.get_array("2024-02") is None
+    numpy.testing.assert_array_equal(holder.get_array("2024-03"), [3, 2, 1])
+    numpy.testing.assert_array_equal(holder.get_array("2024-04"), [4, 2, 1])
+
+
+def test_as_of_delete_sparse_event_preserves_later_dense_replacement():
+    holder = make_holder()
+    holder.set_input("2024-01", [1, 1, 1])
+    holder.set_input_sparse("2024-02", [1], [2])
+    holder.set_input("2024-03", [3, 2, 1])
+
+    holder.delete_arrays("2024-02")
+
+    numpy.testing.assert_array_equal(holder.get_array("2024-03"), [3, 2, 1])
 
 
 def test_as_of_memory_usage_includes_base_patches_and_snapshots():
