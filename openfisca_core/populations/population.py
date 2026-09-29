@@ -115,11 +115,10 @@ class Population(CorePopulation):
 
         """
         # If entity is for instance 'person.household', we get the reference entity 'household' behind the projector
-        entity = (
-            entity
-            if not isinstance(entity, projectors.Projector)
-            else entity.reference_entity
-        )
+        if isinstance(entity, projectors.Projector):
+            entity = entity.reference_entity
+        elif hasattr(entity, "_target_population"):
+            entity = entity._target_population
 
         if not hasattr(entity, "members_position"):
             key = getattr(getattr(entity, "entity", None), "key", entity)
