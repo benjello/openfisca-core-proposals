@@ -88,6 +88,7 @@ def _dump_entity(population, directory) -> None:
     path = os.path.join(directory, population.entity.key)
     os.mkdir(path)
     numpy.save(os.path.join(path, "id.npy"), population.ids)
+    numpy.save(os.path.join(path, "count.npy"), population.count)
 
     if population._period_index:
         snapshot_periods = sorted(
@@ -246,7 +247,12 @@ def _restore_entity(population, directory):
             )
     person_count = len(population.members_entity_id)
     if not population._dynamic:
-        population.count = max(population.members_entity_id) + 1
+        count_path = os.path.join(path, "count.npy")
+        population.count = (
+            int(numpy.load(count_path).item())
+            if os.path.exists(count_path)
+            else max(population.members_entity_id) + 1
+        )
     elif len(population.ids) != population.count:
         population.ids = population._get_alive_ids_for_period(latest)
     return person_count

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import traceback
 from collections.abc import Sequence
 from typing import TypeVar
@@ -52,6 +53,29 @@ class CorePopulation:
         self._permanent_ids = None
         self._id_to_rownum = None
         self._period_index = {}
+
+    @staticmethod
+    def _copy_array(array):
+        if array is None:
+            return None
+        result = array.copy()
+        if isinstance(array, numpy.ndarray):
+            result.flags.writeable = array.flags.writeable
+        return result
+
+    def _clone_core_state(self, result) -> None:
+        result.count = self.count
+        result.ids = copy.deepcopy(self.ids)
+        result._dynamic = self._dynamic
+        result._permanent_ids = self._copy_array(self._permanent_ids)
+        result._id_to_rownum = self._copy_array(self._id_to_rownum)
+        result._period_index = {
+            period: {
+                "count": snapshot["count"],
+                "id_to_rownum": self._copy_array(snapshot["id_to_rownum"]),
+            }
+            for period, snapshot in self._period_index.items()
+        }
 
     def __call__(
         self,

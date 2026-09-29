@@ -30,23 +30,26 @@ class GroupPopulation(Population):
             variable: holder.clone(result)
             for (variable, holder) in self._holders.items()
         }
-        result.count = self.count
-        result.ids = self.ids[:]
-        result._members_entity_id = self._members_entity_id
-        result._members_role = self._members_role
-        result._members_position = self._members_position
-        result._ordered_members_map = self._ordered_members_map
-        result._members_entity_id_by_period = dict(
-            self._members_entity_id_by_period,
-        )
-        result._members_role_by_period = dict(self._members_role_by_period)
-        result._dynamic = self._dynamic
-        result._permanent_ids = (
-            None if self._permanent_ids is None else self._permanent_ids.copy()
-        )
-        result._id_to_rownum = self._id_to_rownum
-        result._period_index = {
-            period: dict(snapshot) for period, snapshot in self._period_index.items()
+        self._clone_core_state(result)
+        result._members_entity_id = self._copy_array(self._members_entity_id)
+        result._members_role = self._copy_array(self._members_role)
+        result._members_position = self._copy_array(self._members_position)
+        result._ordered_members_map = self._copy_array(self._ordered_members_map)
+        result._members_entity_id_by_period = {
+            period: self._copy_array(snapshot)
+            for period, snapshot in self._members_entity_id_by_period.items()
+        }
+        result._members_role_by_period = {
+            period: self._copy_array(snapshot)
+            for period, snapshot in self._members_role_by_period.items()
+        }
+        result._members_position_by_period = {
+            period: self._copy_array(snapshot)
+            for period, snapshot in self._members_position_by_period.items()
+        }
+        result._ordered_members_map_by_period = {
+            period: self._copy_array(snapshot)
+            for period, snapshot in self._ordered_members_map_by_period.items()
         }
         return result
 
@@ -252,7 +255,9 @@ class GroupPopulation(Population):
             )
 
         if members_role is None:
-            current_roles = self._carry_forward_roles(snapshot_period)
+            current_roles = self._members_role_by_period.get(snapshot_period)
+            if current_roles is None:
+                current_roles = self._carry_forward_roles(snapshot_period)
             if any(role is None for role in current_roles):
                 raise ValueError(
                     "members_role is required for new members; call "
@@ -520,6 +525,10 @@ class GroupPopulation(Population):
 
     @members_entity_id.setter
     def members_entity_id(self, members_entity_id) -> None:
+        self._validate_id_density(
+            numpy.asarray(members_entity_id),
+            "members_entity_id",
+        )
         self._members_entity_id = members_entity_id
 
     def set_members_entity_id(self, members_entity_id) -> None:
