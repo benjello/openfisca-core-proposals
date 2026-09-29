@@ -172,6 +172,7 @@ class Holder:
             for known_period in self._as_of_calculated_periods
             if not period.contains(known_period)
         }
+        self._invalidate_as_of_calculations_from(period)
 
     def get_array(self, period):
         """Get the value of the variable for the given period.
@@ -264,12 +265,18 @@ class Holder:
         else:
             self._as_of_explicit_periods.add(period)
 
-    def _invalidate_as_of_calculations_from(self, period) -> None:
+    def _invalidate_as_of_calculations_from(
+        self,
+        period,
+        *,
+        preserve_calculated_base=False,
+    ) -> None:
         cutoff = period.start
         reference = self._as_of_reference_instant(period)
         if (
             self._as_of_base_source == "calculated"
             and self._as_of_base_instant >= cutoff
+            and not preserve_calculated_base
         ):
             self._delete_as_of()
             return
@@ -290,6 +297,10 @@ class Holder:
             known_period
             for known_period in self._as_of_calculated_periods
             if self._as_of_reference_instant(known_period) >= reference
+            and not (
+                preserve_calculated_base
+                and known_period.start == self._as_of_base_instant
+            )
         }
         self._as_of_calculated_periods -= invalidated_periods
         self._as_of_known_periods -= invalidated_periods - self._as_of_explicit_periods
@@ -414,7 +425,13 @@ class Holder:
                 self._record_as_of_period(period, as_of_source)
             return
         if as_of_source == "explicit":
-            self._invalidate_as_of_calculations_from(period)
+            self._invalidate_as_of_calculations_from(
+                period,
+                preserve_calculated_base=(
+                    self._as_of_base_source == "calculated"
+                    and self._as_of_base_instant == period.start
+                ),
+            )
         self._record_as_of_period(period, as_of_source)
         previous = self._reconstruct_as_of(period.start)
         changed = values != previous[indices]

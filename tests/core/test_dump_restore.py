@@ -1,6 +1,7 @@
 import shutil
 import tempfile
 
+import numpy
 from numpy import testing
 from openfisca_country_template import situation_examples
 
@@ -80,3 +81,45 @@ def test_dump_and_restore_as_of_history(tax_benefit_system, tmp_path) -> None:
     assert holder.get_known_periods() == [period("2018-01"), period("2018-03")]
     testing.assert_array_equal(holder.get_array("2018-02"), [1, 2])
     testing.assert_array_equal(holder.get_array("2018-04"), [1, 7])
+
+
+def test_dump_and_restore_preserves_as_of_provenance(
+    tax_benefit_system,
+    tmp_path,
+) -> None:
+    class RestoredState(Variable):
+        value_type = int
+        entity = tax_benefit_system.person_entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+        def initial_formula(person, period):  # noqa: N805
+            return person.filled_array(0)
+
+        def transition_formula(person, period):  # noqa: N805
+            previous = person("RestoredState", period.last_month)
+            return numpy.arange(person.count), previous + 1
+
+    tax_benefit_system.add_variable(RestoredState)
+    simulation = SimulationBuilder().build_from_entities(
+        tax_benefit_system,
+        situation_examples.couple,
+    )
+    simulation.calculate("RestoredState", "2018-01")
+    testing.assert_array_equal(
+        simulation.calculate("RestoredState", "2018-03"),
+        [2, 2],
+    )
+    directory = tmp_path / "simulation"
+    simulation_dumper.dump_simulation(simulation, str(directory))
+
+    restored = simulation_dumper.restore_simulation(
+        str(directory),
+        tax_benefit_system,
+    )
+    restored.set_input("RestoredState", "2018-02", [10, 10])
+
+    testing.assert_array_equal(
+        restored.calculate("RestoredState", "2018-03"),
+        [11, 11],
+    )
