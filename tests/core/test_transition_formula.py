@@ -2,7 +2,8 @@ import numpy
 import pytest
 
 from openfisca_core.entities import Entity
-from openfisca_core.periods import DateUnit
+from openfisca_core.errors import CycleError
+from openfisca_core.periods import DateUnit, period
 from openfisca_core.populations import Population
 from openfisca_core.simulations import Simulation
 from openfisca_core.taxbenefitsystems import TaxBenefitSystem
@@ -197,7 +198,7 @@ def test_transition_formula_validates_result_lengths():
         simulation.calculate("State", "2024-02")
 
 
-def test_temporal_recursion_is_allowed_but_exact_cycle_is_stopped():
+def test_temporal_recursion_is_allowed_but_exact_cycle_is_rejected():
     class State(Variable):
         value_type = int
         entity = entity
@@ -227,10 +228,138 @@ def test_temporal_recursion_is_allowed_but_exact_cycle_is_stopped():
 
     cyclic_simulation = make_simulation(CyclicState)
     cyclic_simulation.set_input("CyclicState", "2024-01", [0, 0, 0])
+    with pytest.raises(CycleError, match="Circular definition"):
+        cyclic_simulation.calculate("CyclicState", "2024-02")
+
+
+def test_future_recursion_is_rejected():
+    class State(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+        def transition_formula(person, period):  # noqa: N805
+            person("State", period.offset(1))
+            return [], []
+
+    simulation = make_simulation(State)
+    simulation.set_input("State", "2024-01", [0, 0, 0])
+
+    with pytest.raises(CycleError, match="Future recursion"):
+        simulation.calculate("State", "2024-02")
+
+
+def test_initial_formula_cycle_is_rejected_and_clears_stack():
+    class State(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+        def initial_formula(person, period):  # noqa: N805
+            return person("State", period)
+
+    simulation = make_simulation(State)
+
+    with pytest.raises(CycleError, match="Circular definition"):
+        simulation.calculate("State", "2024-01")
+    assert simulation.tracer.stack == []
+
+
+def test_initial_formula_calculation_clears_final_stack():
+    class State(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+        def initial_formula(person, period):  # noqa: N805
+            return [1, 2, 3]
+
+    simulation = make_simulation(State)
+
     numpy.testing.assert_array_equal(
-        cyclic_simulation.calculate("CyclicState", "2024-02"),
-        [0, 0, 0],
+        simulation.calculate("State", "2024-01"),
+        [1, 2, 3],
     )
+    assert simulation.tracer.stack == []
+
+
+def test_noop_transition_is_recorded_as_calculated_period():
+    class State(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+        def transition_formula(person, period):  # noqa: N805
+            return [], []
+
+    simulation = make_simulation(State)
+    simulation.set_input("State", "2024-01", [1, 2, 3])
+    simulation.calculate("State", "2024-02")
+
+    holder = simulation.get_holder("State")
+    assert holder._as_of_calculated_periods == {period("2024-02")}
+
+
+def test_dependency_cycle_error_is_not_swallowed():
+    class Dependency(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+
+        def formula(person, period):  # noqa: N805
+            return person("Dependency", period)
+
+    class State(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+        def transition_formula(person, period):  # noqa: N805
+            person("Dependency", period)
+            return [], []
+
+    simulation = make_simulation(State, Dependency)
+    simulation.set_input("State", "2024-01", [0, 0, 0])
+
+    with pytest.raises(CycleError, match="Dependency"):
+        simulation.calculate("State", "2024-02")
+
+
+def test_retroactive_input_recalculates_future_transitions():
+    calls = []
+
+    class State(Variable):
+        value_type = int
+        entity = entity
+        definition_period = DateUnit.MONTH
+        as_of = True
+
+        def transition_formula(person, period):  # noqa: N805
+            calls.append(period)
+            previous = person("State", period.last_month)
+            return numpy.arange(3), previous + 1
+
+    simulation = make_simulation(State)
+    simulation.set_input("State", "2024-01", [0, 0, 0])
+    numpy.testing.assert_array_equal(
+        simulation.calculate("State", "2024-03"),
+        [2, 2, 2],
+    )
+
+    simulation.set_input("State", "2024-02", [10, 10, 10])
+
+    numpy.testing.assert_array_equal(
+        simulation.calculate("State", "2024-03"),
+        [11, 11, 11],
+    )
+    holder = simulation.get_holder("State")
+    assert holder._as_of_patch_sources == ["explicit", "calculated"]
+    assert len(calls) == 3
 
 
 def test_trace_records_initial_and_transition_formula_types():

@@ -39,12 +39,16 @@ class Holder:
         if self._as_of:
             self._as_of_base = None
             self._as_of_base_instant = None
+            self._as_of_base_source = None
             self._as_of_patches = []
             self._as_of_patch_instants = []
+            self._as_of_patch_sources = []
             self._as_of_snapshots = OrderedDict()
             self._as_of_max_snapshots = self.variable.snapshot_count
             self._as_of_transition_computed = set()
             self._as_of_known_periods = set()
+            self._as_of_explicit_periods = set()
+            self._as_of_calculated_periods = set()
 
         # By default, do not activate on-disk storage, or variable dropping
         self._disk_storage = None
@@ -72,11 +76,16 @@ class Holder:
         if self._as_of:
             new_dict["_as_of_patches"] = list(self._as_of_patches)
             new_dict["_as_of_patch_instants"] = list(self._as_of_patch_instants)
+            new_dict["_as_of_patch_sources"] = list(self._as_of_patch_sources)
             new_dict["_as_of_snapshots"] = OrderedDict()
             new_dict["_as_of_transition_computed"] = set(
                 self._as_of_transition_computed,
             )
             new_dict["_as_of_known_periods"] = set(self._as_of_known_periods)
+            new_dict["_as_of_explicit_periods"] = set(self._as_of_explicit_periods)
+            new_dict["_as_of_calculated_periods"] = set(
+                self._as_of_calculated_periods,
+            )
 
         new_dict["population"] = population
         new_dict["simulation"] = population.simulation
@@ -110,11 +119,15 @@ class Holder:
         if period is None:
             self._as_of_base = None
             self._as_of_base_instant = None
+            self._as_of_base_source = None
             self._as_of_patches = []
             self._as_of_patch_instants = []
+            self._as_of_patch_sources = []
             self._as_of_snapshots.clear()
             self._as_of_transition_computed.clear()
             self._as_of_known_periods.clear()
+            self._as_of_explicit_periods.clear()
+            self._as_of_calculated_periods.clear()
             return
 
         period = periods.period(period)
@@ -126,12 +139,17 @@ class Holder:
             return
 
         retained_patches = [
-            patch
-            for patch in self._as_of_patches
+            (patch, source)
+            for patch, source in zip(
+                self._as_of_patches,
+                self._as_of_patch_sources,
+                strict=True,
+            )
             if not period.start <= patch[0] <= period.stop
         ]
-        self._as_of_patches = retained_patches
-        self._as_of_patch_instants = [patch[0] for patch in retained_patches]
+        self._as_of_patches = [patch for patch, _ in retained_patches]
+        self._as_of_patch_sources = [source for _, source in retained_patches]
+        self._as_of_patch_instants = [patch[0] for patch in self._as_of_patches]
         self._as_of_snapshots.clear()
         self._as_of_transition_computed = {
             instant
@@ -141,6 +159,16 @@ class Holder:
         self._as_of_known_periods = {
             known_period
             for known_period in self._as_of_known_periods
+            if not period.contains(known_period)
+        }
+        self._as_of_explicit_periods = {
+            known_period
+            for known_period in self._as_of_explicit_periods
+            if not period.contains(known_period)
+        }
+        self._as_of_calculated_periods = {
+            known_period
+            for known_period in self._as_of_calculated_periods
             if not period.contains(known_period)
         }
 
@@ -219,45 +247,106 @@ class Holder:
         result.flags.writeable = False
         return result
 
-    def _insert_as_of_patch(self, instant, indices, values) -> None:
+    def _insert_as_of_patch(self, instant, indices, values, source) -> None:
         indices = self._immutable_array(indices.astype(numpy.int32, copy=False))
         values = self._immutable_array(values)
         position = bisect.bisect_right(self._as_of_patch_instants, instant)
         self._invalidate_as_of_snapshots_from(instant)
         self._as_of_patch_instants.insert(position, instant)
         self._as_of_patches.insert(position, (instant, indices, values))
+        self._as_of_patch_sources.insert(position, source)
 
-    def _set_as_of(self, period, value) -> None:
-        instant = period.start
+    def _record_as_of_period(self, period, source) -> None:
         self._as_of_known_periods.add(period)
+        if source == "calculated":
+            self._as_of_calculated_periods.add(period)
+        else:
+            self._as_of_explicit_periods.add(period)
+
+    def _invalidate_as_of_calculations_from(self, period) -> None:
+        cutoff = period.start
+        reference = self._as_of_reference_instant(period)
+        if (
+            self._as_of_base_source == "calculated"
+            and self._as_of_base_instant >= cutoff
+        ):
+            self._delete_as_of()
+            return
+
+        retained_patches = [
+            (patch, source)
+            for patch, source in zip(
+                self._as_of_patches,
+                self._as_of_patch_sources,
+                strict=True,
+            )
+            if source != "calculated" or patch[0] < cutoff
+        ]
+        self._as_of_patches = [patch for patch, _ in retained_patches]
+        self._as_of_patch_sources = [source for _, source in retained_patches]
+        self._as_of_patch_instants = [patch[0] for patch in self._as_of_patches]
+        invalidated_periods = {
+            known_period
+            for known_period in self._as_of_calculated_periods
+            if self._as_of_reference_instant(known_period) >= reference
+        }
+        self._as_of_calculated_periods -= invalidated_periods
+        self._as_of_known_periods -= invalidated_periods - self._as_of_explicit_periods
+        self._as_of_transition_computed = {
+            instant
+            for instant in self._as_of_transition_computed
+            if instant < reference
+            or any(
+                self._as_of_reference_instant(explicit_period) == instant
+                for explicit_period in self._as_of_explicit_periods
+            )
+        }
+        self._invalidate_as_of_snapshots_from(cutoff)
+
+    def _set_as_of(self, period, value, source) -> None:
+        instant = period.start
+        if source == "explicit":
+            self._invalidate_as_of_calculations_from(period)
+        self._record_as_of_period(period, source)
         self._as_of_transition_computed.add(self._as_of_reference_instant(period))
         if self._as_of_base is None:
             self._as_of_base = self._immutable_array(value)
             self._as_of_base_instant = instant
+            self._as_of_base_source = source
             self._cache_as_of_snapshot(instant, self._as_of_base, 0)
             return
 
         if instant < self._as_of_base_instant:
             previous_base = self._as_of_base
             previous_base_instant = self._as_of_base_instant
+            previous_base_source = self._as_of_base_source
             self._as_of_base = self._immutable_array(value)
             self._as_of_base_instant = instant
+            self._as_of_base_source = source
             indices = numpy.arange(len(previous_base))
             self._insert_as_of_patch(
                 previous_base_instant,
                 indices,
                 previous_base,
+                previous_base_source,
             )
             self._cache_as_of_snapshot(instant, self._as_of_base, 0)
             return
 
         # A dense input replaces the entire state, including unchanged entries.
         indices = numpy.arange(len(value))
-        self._insert_as_of_patch(instant, indices, value)
+        self._insert_as_of_patch(instant, indices, value, source)
         patch_count = bisect.bisect_right(self._as_of_patch_instants, instant)
         self._cache_as_of_snapshot(instant, self._immutable_array(value), patch_count)
 
-    def set_input_sparse(self, period, indices, values) -> None:
+    def set_input_sparse(
+        self,
+        period,
+        indices,
+        values,
+        *,
+        as_of_source="explicit",
+    ) -> None:
         """Set selected values of an ``as_of`` variable as a sparse patch."""
         if not self._as_of:
             msg = (
@@ -320,12 +409,21 @@ class Holder:
             raise ValueError(msg) from error
 
         if len(indices) == 0:
+            if as_of_source == "calculated":
+                self._record_as_of_period(period, as_of_source)
             return
-        self._as_of_known_periods.add(period)
+        if as_of_source == "explicit":
+            self._invalidate_as_of_calculations_from(period)
+        self._record_as_of_period(period, as_of_source)
         previous = self._reconstruct_as_of(period.start)
         changed = values != previous[indices]
         if changed.any():
-            self._insert_as_of_patch(period.start, indices[changed], values[changed])
+            self._insert_as_of_patch(
+                period.start,
+                indices[changed],
+                values[changed],
+                as_of_source,
+            )
         self._as_of_transition_computed.add(self._as_of_reference_instant(period))
 
     def get_memory_usage(self) -> t.MemoryUsage:
@@ -382,9 +480,7 @@ class Holder:
                 for array in (indices, values)
             )
             arrays.extend(snapshot for snapshot, _ in self._as_of_snapshots.values())
-            unique_arrays = {
-                id(array): array for array in arrays if array is not None
-            }
+            unique_arrays = {id(array): array for array in arrays if array is not None}
             usage.update(
                 {
                     "nb_arrays": len(unique_arrays),
@@ -519,12 +615,12 @@ class Holder:
                 )
         return value
 
-    def _set(self, period, value) -> None:
+    def _set(self, period, value, *, as_of_source="explicit") -> None:
         value = self._to_array(value)
         self._check_set_period(period)
 
         if self._as_of:
-            self._set_as_of(period, value)
+            self._set_as_of(period, value, as_of_source)
             return
 
         should_store_on_disk = (
