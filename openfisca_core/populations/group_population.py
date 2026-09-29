@@ -239,6 +239,86 @@ class GroupPopulation(Population):
             )
         return members_role == role
 
+    def auto_assign_roles_for_period(
+        self,
+        period,
+        members_entity_id,
+        previous_period=None,
+    ):
+        """Assign roles deterministically after a membership change.
+
+        Stayers retain their role. Movers are processed in person-row order and
+        try their previous role first, then successively higher roles, then
+        lower roles. Role capacities are respected. Finally, every non-empty
+        group is guaranteed to contain the first declared role (normally
+        ``first_parent``): the group's best-ranked member, with row order as a
+        tie-breaker, is promoted when necessary.
+
+        This method only computes roles. Pass its result to
+        :meth:`set_members_for_period` to commit membership and roles together.
+        """
+        new_membership = numpy.asarray(members_entity_id)
+        if new_membership.ndim != 1:
+            raise ValueError("members_entity_id must be a one-dimensional array")
+        if len(new_membership) != self.members.count:
+            raise ValueError(
+                "members_entity_id must contain one entry per member "
+                f"(expected {self.members.count}, got {len(new_membership)})",
+            )
+        if not numpy.issubdtype(new_membership.dtype, numpy.integer):
+            raise ValueError("members_entity_id must contain integer IDs")
+        if numpy.any(new_membership < 0) or numpy.any(new_membership >= self.count):
+            raise ValueError("members_entity_id contains an unknown group ID")
+
+        source_period = period if previous_period is None else previous_period
+        old_membership = self._get_members_entity_id(source_period)
+        old_roles = self._get_members_role(source_period)
+        roles = self.entity.flattened_roles
+        role_rank = {role: index for index, role in enumerate(roles)}
+        result = numpy.empty(len(new_membership), dtype=object)
+        assigned = numpy.zeros(len(new_membership), dtype=bool)
+        used = [dict.fromkeys(roles, 0) for _ in range(self.count)]
+
+        for row, group_id in enumerate(new_membership):
+            if old_membership[row] != group_id:
+                continue
+            role = old_roles[row]
+            result[row] = role
+            assigned[row] = True
+            used[int(group_id)][role] += 1
+
+        for row, group_id in enumerate(new_membership):
+            if assigned[row]:
+                continue
+            old_rank = role_rank.get(old_roles[row], 0)
+            search_order = [old_rank, *range(old_rank - 1, -1, -1)]
+            search_order.extend(range(old_rank + 1, len(roles)))
+            for rank in search_order:
+                role = roles[rank]
+                if role.max is None or used[int(group_id)][role] < role.max:
+                    result[row] = role
+                    assigned[row] = True
+                    used[int(group_id)][role] += 1
+                    break
+            if not assigned[row]:
+                raise ValueError(f"No role is available in group {group_id}")
+
+        primary_role = roles[0]
+        for group_id in numpy.unique(new_membership):
+            group_id = int(group_id)
+            if used[group_id][primary_role]:
+                continue
+            members = numpy.flatnonzero(new_membership == group_id)
+            promoted = min(
+                members,
+                key=lambda row: (role_rank[result[row]], row),
+            )
+            used[group_id][result[promoted]] -= 1
+            result[promoted] = primary_role
+            used[group_id][primary_role] += 1
+
+        return result
+
     @property
     def members_position(self):
         if self._members_position is None and self.members_entity_id is not None:
