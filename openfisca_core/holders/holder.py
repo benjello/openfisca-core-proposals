@@ -153,21 +153,17 @@ class Holder:
             previous_base_instant = self._as_of_base_instant
             self._as_of_base = self._immutable_array(value)
             self._as_of_base_instant = instant
-            changed = previous_base != self._as_of_base
-            if changed.any():
-                indices = numpy.flatnonzero(changed)
-                self._insert_as_of_patch(
-                    previous_base_instant,
-                    indices,
-                    previous_base[indices],
-                )
+            indices = numpy.arange(len(previous_base))
+            self._insert_as_of_patch(
+                previous_base_instant,
+                indices,
+                previous_base,
+            )
             return
 
-        previous = self._reconstruct_as_of(instant)
-        changed = value != previous
-        if changed.any():
-            indices = numpy.flatnonzero(changed)
-            self._insert_as_of_patch(instant, indices, value[indices])
+        # A dense input replaces the entire state, including unchanged entries.
+        indices = numpy.arange(len(value))
+        self._insert_as_of_patch(instant, indices, value)
 
     def get_memory_usage(self) -> t.MemoryUsage:
         """Get data about the virtual memory usage of the Holder.
