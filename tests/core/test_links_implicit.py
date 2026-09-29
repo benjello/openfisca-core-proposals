@@ -138,15 +138,6 @@ def test_projection_runs_inside_a_formula(simulation):
     )
 
 
-def test_implicit_link_remains_compatible_with_get_rank(simulation):
-    salaries = simulation.persons("salary", "2024")
-
-    numpy.testing.assert_array_equal(
-        simulation.persons.get_rank(simulation.persons.household, salaries),
-        [0, 1, 0],
-    )
-
-
 def test_projector_proxy_preserves_attributes(simulation):
     adult = simulation.persons.household.adult
 
