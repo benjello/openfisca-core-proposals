@@ -369,7 +369,11 @@ class Simulation:
                     "Call set_input first or define initial_formula."
                 )
                 raise ValueError(msg)
-            self._check_for_stateful_cycle(variable.name, period)
+            self._check_for_stateful_cycle(
+                variable.name,
+                period,
+                allow_past=holder._as_of_base is not None,
+            )
             result = self._run_stateful_formula(
                 initial_formula,
                 population,
@@ -526,7 +530,9 @@ class Simulation:
             message = f"Quasicircular definition detected on formula {variable}@{period} involving {self.tracer.stack}"
             raise errors.SpiralError(message, variable)
 
-    def _check_for_stateful_cycle(self, variable: str, period) -> None:
+    def _check_for_stateful_cycle(
+        self, variable: str, period, *, allow_past=True
+    ) -> None:
         for frame in self.tracer.stack[:-1]:
             if frame["name"] != variable:
                 continue
@@ -537,6 +543,12 @@ class Simulation:
                 msg = (
                     "Future recursion detected on stateful formula "
                     f"{variable}@{period} from {frame['period']}"
+                )
+                raise errors.CycleError(msg)
+            if not allow_past:
+                msg = (
+                    "Circular definition detected on initial formula "
+                    f"{variable}@{period} without an existing state"
                 )
                 raise errors.CycleError(msg)
 
