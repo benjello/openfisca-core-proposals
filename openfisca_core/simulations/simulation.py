@@ -371,6 +371,7 @@ class Simulation:
                 population,
                 period,
             )
+            self.tracer.record_formula_type("initial")
             result = self._cast_formula_result(result, variable)
             holder._set(period, result)
             holder._as_of_transition_computed.add(instant)
@@ -385,6 +386,7 @@ class Simulation:
                     population,
                     period,
                 )
+                self.tracer.record_formula_type("transition")
                 if transition is not None:
                     selector, values = transition
                     selector = numpy.asarray(selector)
