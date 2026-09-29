@@ -81,3 +81,29 @@ def test_many2one_contextualizes_link_field_errors(simulation):
 
     with pytest.raises(LinkResolutionError, match="Link 'mother'.*'unknown_id'"):
         simulation.persons.mother("age", "2024")
+
+
+def test_many2one_rejects_variables_from_another_entity():
+    person = entities.SingleEntity("person", "persons", "", "")
+    household = entities.GroupEntity(
+        "household", "households", "", "", roles=[{"key": "member"}]
+    )
+    person.add_link(Many2OneLink("mother", "mother_id", "person"))
+    system = taxbenefitsystems.TaxBenefitSystem([person, household])
+
+    class mother_id(variables.Variable):
+        value_type = int
+        entity = person
+        definition_period = periods.ETERNITY
+        default_value = -1
+
+    class rent(variables.Variable):
+        value_type = int
+        entity = household
+        definition_period = periods.YEAR
+
+    system.add_variables(mother_id, rent)
+    simulation = SimulationBuilder().build_default_simulation(system, count=2)
+
+    with pytest.raises(LinkResolutionError, match="defined for 'households'"):
+        simulation.persons.mother("rent", "2024")

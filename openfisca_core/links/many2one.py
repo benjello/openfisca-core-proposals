@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy
 
-from openfisca_core import indexed_enums
+from openfisca_core import errors, indexed_enums
 
 from .link import Link, LinkResolutionError
 
@@ -20,7 +20,9 @@ class Many2OneLink(Link):
 
         simulation = self._source_population.simulation
         try:
-            target_ids = simulation.calculate(self.link_field, period)
+            target_ids = self._source_population(self.link_field, period)
+        except (errors.CycleError, errors.SpiralError):
+            raise
         except Exception as error:
             message = (
                 f"Link '{self.name}' could not read link field "
@@ -29,7 +31,9 @@ class Many2OneLink(Link):
             raise LinkResolutionError(message) from error
 
         try:
-            target_values = simulation.calculate(variable_name, period)
+            target_values = self._target_population(variable_name, period)
+        except (errors.CycleError, errors.SpiralError):
+            raise
         except Exception as error:
             message = (
                 f"Link '{self.name}' could not calculate target variable "
