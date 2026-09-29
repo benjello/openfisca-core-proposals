@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import numpy
 
+from openfisca_core import errors
+
 from .link import Link, LinkResolutionError
 
 
@@ -12,7 +14,9 @@ class One2ManyLink(Link):
 
     def _target_values(self, variable_name: str, period) -> numpy.ndarray:
         try:
-            return self._target_population.simulation.calculate(variable_name, period)
+            return self._target_population(variable_name, period)
+        except (errors.CycleError, errors.SpiralError):
+            raise
         except Exception as error:
             message = (
                 f"Link '{self.name}' could not calculate target variable "
@@ -22,10 +26,9 @@ class One2ManyLink(Link):
 
     def _source_rows(self, period) -> numpy.ndarray:
         try:
-            source_ids = self._target_population.simulation.calculate(
-                self.link_field,
-                period,
-            )
+            source_ids = self._target_population(self.link_field, period)
+        except (errors.CycleError, errors.SpiralError):
+            raise
         except Exception as error:
             message = (
                 f"Link '{self.name}' could not read link field "
