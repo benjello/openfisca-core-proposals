@@ -122,7 +122,7 @@ class Variable:
                 required=True,
                 setter=self.set_possible_values,
             )
-        if self.value_type == str:
+        if self.value_type is str:
             self.max_length = self.set(attr, "max_length", allowed_type=int)
             if self.max_length:
                 self.dtype = f"|S{self.max_length}"
@@ -174,11 +174,79 @@ class Variable:
             "introspection_data",
         )
 
+        self.as_of = self.set(attr, "as_of", setter=self.set_as_of)
+        self.snapshot_count = self.set(
+            attr,
+            "snapshot_count",
+            allowed_type=int,
+            default=3,
+        )
+        if self.as_of and self.set_input:
+            msg = (
+                f'Variable "{self.name}" declares both as_of and set_input, '
+                "which are incompatible."
+            )
+            raise ValueError(msg)
+        if self.as_of and self.definition_period == DateUnit.ETERNITY:
+            msg = (
+                f'Variable "{self.name}" declares as_of with an ETERNITY '
+                "definition_period, which has no temporal transition semantics."
+            )
+            raise ValueError(msg)
+        if self.snapshot_count < 1:
+            msg = (
+                f"Invalid value '{self.snapshot_count}' for attribute "
+                f"'snapshot_count' in variable '{self.name}'. Must be positive."
+            )
+            raise ValueError(msg)
+
+        transition_formulas_attr, attr = helpers._partition(
+            attr,
+            lambda name, value: name.startswith(
+                config.TRANSITION_FORMULA_NAME_PREFIX,
+            ),
+        )
+        self.transition_formulas = self.set_transition_formulas(
+            transition_formulas_attr,
+        )
+        if self.transition_formulas and not self.as_of:
+            msg = (
+                f'Variable "{self.name}" declares transition_formula without as_of. '
+                "transition_formula is only available for as_of variables."
+            )
+            raise ValueError(msg)
+
+        initial_formulas_attr, attr = helpers._partition(
+            attr,
+            lambda name, value: name.startswith(
+                config.INITIAL_FORMULA_NAME_PREFIX,
+            ),
+        )
+        self.initial_formulas = self.set_initial_formulas(initial_formulas_attr)
+        if self.initial_formulas and not self.as_of:
+            msg = (
+                f'Variable "{self.name}" declares initial_formula without as_of. '
+                "initial_formula is only available for as_of variables."
+            )
+            raise ValueError(msg)
+
         formulas_attr, unexpected_attrs = helpers._partition(
             attr,
             lambda name, value: name.startswith(config.FORMULA_NAME_PREFIX),
         )
         self.formulas = self.set_formulas(formulas_attr)
+        if self.formulas and self.initial_formulas:
+            msg = (
+                f'Variable "{self.name}" declares both formula and initial_formula, '
+                "which are mutually exclusive."
+            )
+            raise ValueError(msg)
+        if self.formulas and self.transition_formulas:
+            msg = (
+                f'Variable "{self.name}" declares both formula and '
+                "transition_formula, which are mutually exclusive."
+            )
+            raise ValueError(msg)
 
         if unexpected_attrs:
             msg = 'Unexpected attributes in definition of variable "{}": {!r}'.format(
@@ -221,7 +289,7 @@ class Variable:
             and value is not None
             and not isinstance(value, allowed_type)
         ):
-            if allowed_type == float and isinstance(value, int):
+            if allowed_type is float and isinstance(value, int):
                 value = float(value)
             else:
                 msg = f"Invalid value '{value}' for attribute '{attribute_name}' in variable '{self.name}'. Must be of type '{allowed_type}'."
@@ -297,6 +365,19 @@ class Variable:
             return textwrap.dedent(documentation)
         return None
 
+    def set_as_of(self, value):
+        if value is None or value is False:
+            return False
+        if value is True or value == "start":
+            return "start"
+        if value == "end":
+            return "end"
+        msg = (
+            f"Invalid value '{value}' for attribute 'as_of' in variable "
+            f"'{self.name}'. Allowed values are True, 'start', 'end', and False."
+        )
+        raise ValueError(msg)
+
     def set_set_input(self, set_input):
         if not set_input and self.baseline_variable:
             return self.baseline_variable.set_input
@@ -333,6 +414,118 @@ class Variable:
             )
 
         return formulas
+
+    def set_initial_formulas(self, formulas_attr):
+        formulas = sortedcontainers.sorteddict.SortedDict()
+        for formula_name, formula in formulas_attr.items():
+            starting_date = self.parse_initial_formula_name(formula_name)
+            if self.end is not None and starting_date > self.end:
+                msg = (
+                    f'Variable "{self.name}" ends on "{self.end}", but declares '
+                    f'an initial_formula from "{starting_date}" ({formula_name}).'
+                )
+                raise ValueError(msg)
+            formulas[str(starting_date)] = formula
+
+        baseline_formulas = (
+            self.baseline_variable.initial_formulas
+            if self.baseline_variable is not None
+            else {}
+        )
+        first_reform_date = formulas.peekitem(0)[0] if formulas else None
+        formulas.update(
+            {
+                start_date: formula
+                for start_date, formula in baseline_formulas.items()
+                if first_reform_date is None or start_date < first_reform_date
+            },
+        )
+        return formulas
+
+    def set_transition_formulas(self, formulas_attr):
+        formulas = sortedcontainers.sorteddict.SortedDict()
+        for formula_name, formula in formulas_attr.items():
+            starting_date = self.parse_transition_formula_name(formula_name)
+            if self.end is not None and starting_date > self.end:
+                msg = (
+                    f'Variable "{self.name}" ends on "{self.end}", but declares '
+                    f'a transition_formula from "{starting_date}" ({formula_name}).'
+                )
+                raise ValueError(msg)
+            formulas[str(starting_date)] = formula
+
+        baseline_formulas = (
+            self.baseline_variable.transition_formulas
+            if self.baseline_variable is not None
+            else {}
+        )
+        first_reform_date = formulas.peekitem(0)[0] if formulas else None
+        formulas.update(
+            {
+                start_date: formula
+                for start_date, formula in baseline_formulas.items()
+                if first_reform_date is None or start_date < first_reform_date
+            },
+        )
+        return formulas
+
+    def parse_initial_formula_name(self, attribute_name):
+        """Return the start date encoded in an initial formula name."""
+
+        def raise_error() -> NoReturn:
+            msg = (
+                f'Unrecognized initial_formula name in variable "{self.name}". '
+                'Expected "initial_formula", "initial_formula_YYYY", '
+                '"initial_formula_YYYY_MM", or "initial_formula_YYYY_MM_DD". '
+                f'Found: "{attribute_name}".'
+            )
+            raise ValueError(msg)
+
+        if attribute_name == config.INITIAL_FORMULA_NAME_PREFIX:
+            return datetime.date.min
+
+        match = re.fullmatch(
+            r"initial_formula_(\d{4})(?:_(\d{2}))?(?:_(\d{2}))?",
+            attribute_name,
+        )
+        if not match:
+            raise_error()
+        date_str = "-".join(
+            [match.group(1), match.group(2) or "01", match.group(3) or "01"],
+        )
+        try:
+            return datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            raise_error()
+
+    def parse_transition_formula_name(self, attribute_name):
+        """Return the start date encoded in a transition formula name."""
+
+        def raise_error() -> NoReturn:
+            msg = (
+                f'Unrecognized transition_formula name in variable "{self.name}". '
+                'Expected "transition_formula", "transition_formula_YYYY", '
+                '"transition_formula_YYYY_MM", or '
+                f'"transition_formula_YYYY_MM_DD". Found: "{attribute_name}".'
+            )
+            raise ValueError(msg)
+
+        if attribute_name == config.TRANSITION_FORMULA_NAME_PREFIX:
+            return datetime.date.min
+
+        match = re.fullmatch(
+            r"transition_formula_(\d{4})(?:_(\d{2}))?(?:_(\d{2}))?",
+            attribute_name,
+        )
+        if not match:
+            raise_error()
+        date_str = "-".join(
+            [match.group(1), match.group(2) or "01", match.group(3) or "01"],
+        )
+        try:
+            return datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            raise_error()
 
     def parse_formula_name(self, attribute_name):
         """Returns the starting date of a formula based on its name.
@@ -372,7 +565,7 @@ class Variable:
 
     def is_input_variable(self):
         """Returns True if the variable is an input variable."""
-        return len(self.formulas) == 0
+        return not (self.formulas or self.initial_formulas or self.transition_formulas)
 
     @classmethod
     def get_introspection_data(cls):
@@ -430,6 +623,64 @@ class Variable:
                 return self.formulas[start_date]
 
         return None
+
+    def get_initial_formula(
+        self,
+        period: None | t.Instant | t.Period | str | int = None,
+    ) -> None | t.Formula:
+        """Return the initial formula applicable at ``period``."""
+        if not self.initial_formulas:
+            return None
+        if period is None:
+            return self.initial_formulas.peekitem(index=0)[1]
+
+        if isinstance(period, Period):
+            instant = period.start
+        else:
+            try:
+                instant = periods.period(period).start
+            except ValueError:
+                instant = periods.instant(period)
+        if instant is None or (self.end and instant.date > self.end):
+            return None
+
+        for start_date in reversed(self.initial_formulas):
+            if start_date <= str(instant):
+                return self.initial_formulas[start_date]
+        return None
+
+    @property
+    def has_initial_formula(self) -> bool:
+        return bool(self.initial_formulas)
+
+    def get_transition_formula(
+        self,
+        period: None | t.Instant | t.Period | str | int = None,
+    ) -> None | t.Formula:
+        """Return the transition formula applicable at ``period``."""
+        if not self.transition_formulas:
+            return None
+        if period is None:
+            return self.transition_formulas.peekitem(index=0)[1]
+
+        if isinstance(period, Period):
+            instant = period.start
+        else:
+            try:
+                instant = periods.period(period).start
+            except ValueError:
+                instant = periods.instant(period)
+        if instant is None or (self.end and instant.date > self.end):
+            return None
+
+        for start_date in reversed(self.transition_formulas):
+            if start_date <= str(instant):
+                return self.transition_formulas[start_date]
+        return None
+
+    @property
+    def has_transition_formula(self) -> bool:
+        return bool(self.transition_formulas)
 
     def clone(self):
         return self.__class__()

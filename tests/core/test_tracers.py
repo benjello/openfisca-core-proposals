@@ -229,6 +229,16 @@ def test_flat_trace(tracer) -> None:
     assert len(trace) == 2
     assert trace["a<2019>"]["dependencies"] == ["b<2019>"]
     assert trace["b<2019>"]["dependencies"] == []
+    assert trace["a<2019>"]["formula_type"] is None
+
+
+def test_flat_trace_includes_formula_type(tracer) -> None:
+    tracer._enter_calculation("a", 2019)
+    tracer.record_formula_type("initial")
+    tracer._exit_calculation()
+
+    assert tracer.get_flat_trace()["a<2019>"]["formula_type"] == "initial"
+    assert tracer.get_serialized_flat_trace()["a<2019>"]["formula_type"] == "initial"
 
 
 def test_flat_trace_serialize_vectorial_values(tracer) -> None:
@@ -396,6 +406,16 @@ def test_rounding() -> None:
     assert (
         node_a.formula_time() == 1.235e-08
     )  # The rounding should not prevent from calculating a precise formula_time
+
+
+def test_trace_node_preserves_historical_positional_arguments() -> None:
+    value = numpy.asarray([1])
+    node = TraceNode("a", 2017, None, [], [], value, 1.5, 2.5)
+
+    assert node.value is value
+    assert node.start == 1.5
+    assert node.end == 2.5
+    assert node.formula_type is None
 
 
 def test_variable_stats(tracer) -> None:

@@ -72,6 +72,10 @@ class FullTracer:
         if self._current_node is not None:
             self._current_node.value = value
 
+    def record_formula_type(self, formula_type: str) -> None:
+        if self._current_node is not None:
+            self._current_node.formula_type = formula_type
+
     def record_calculation_end(self) -> None:
         self._simple_tracer.record_calculation_end()
         self._record_end_time()
@@ -83,9 +87,14 @@ class FullTracer:
         max_depth: int = sys.maxsize,
         ignore_default: bool = False,
         tax_benefit_system: t.TaxBenefitSystem | None = None,
+        show_formula_type: bool = False,
     ) -> None:
         self.computation_log.print_log(
-            aggregate, max_depth, ignore_default, tax_benefit_system
+            aggregate,
+            max_depth,
+            ignore_default,
+            tax_benefit_system,
+            show_formula_type,
         )
 
     def generate_performance_graph(self, dir_path: str) -> None:

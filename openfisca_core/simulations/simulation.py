@@ -139,6 +139,17 @@ class Simulation:
 
         self._check_period_consistency(period, variable)
 
+        if variable.end is not None and period.start.date > variable.end:
+            return holder.default_array()
+
+        if variable.has_initial_formula or variable.has_transition_formula:
+            return self._calculate_as_of_transition(
+                variable,
+                population,
+                holder,
+                period,
+            )
+
         # First look for a value already cached
         cached_array = holder.get_array(period)
         if cached_array is not None:
@@ -334,6 +345,98 @@ class Simulation:
             self.tracer,
         )
 
+    def _calculate_as_of_transition(self, variable, population, holder, period):
+        instant = period.start if variable.as_of == "start" else period.stop
+        if instant in holder._as_of_transition_computed:
+            result = holder.get_array(period)
+            return result if result is not None else holder.default_array()
+
+        if self.start_computation_period is not None:
+            if not isinstance(self.start_computation_period, periods.Period):
+                self.start_computation_period = periods.period(
+                    self.start_computation_period,
+                )
+            if period < self.start_computation_period:
+                holder._as_of_transition_computed.add(instant)
+                result = holder.get_array(period)
+                return result if result is not None else holder.default_array()
+
+        if holder.get_array(period) is None:
+            initial_formula = variable.get_initial_formula(period)
+            if initial_formula is None:
+                msg = (
+                    f'Variable "{variable.name}" has no initial state for {period}. '
+                    "Call set_input first or define initial_formula."
+                )
+                raise ValueError(msg)
+            self._check_for_stateful_cycle(
+                variable.name,
+                period,
+                allow_past=(
+                    holder._as_of_base is not None
+                    and holder._as_of_base_instant
+                    <= holder._as_of_reference_instant(period)
+                ),
+            )
+            result = self._run_stateful_formula(
+                initial_formula,
+                population,
+                period,
+            )
+            self._record_formula_type("initial")
+            result = self._cast_formula_result(result, variable)
+            holder._set(period, result, as_of_source="calculated")
+            holder._as_of_transition_computed.add(instant)
+            return holder.get_array(period)
+
+        transition_formula = variable.get_transition_formula(period)
+        if transition_formula is not None:
+            self._check_for_stateful_cycle(variable.name, period)
+            transition = self._run_stateful_formula(
+                transition_formula,
+                population,
+                period,
+            )
+            self._record_formula_type("transition")
+            if transition is not None:
+                selector, values = transition
+                selector = numpy.asarray(selector)
+                if selector.size == 0:
+                    selector = selector.astype(numpy.intp)
+                elif selector.dtype == numpy.bool_:
+                    if selector.ndim != 1 or len(selector) != population.count:
+                        msg = (
+                            f'transition_formula of "{variable.name}" returned '
+                            "a boolean selector with an invalid shape."
+                        )
+                        raise ValueError(msg)
+                    selector = numpy.flatnonzero(selector)
+                holder.set_input_sparse(
+                    period,
+                    selector,
+                    values,
+                    as_of_source="calculated",
+                )
+
+        holder._as_of_transition_computed.add(instant)
+        result = holder.get_array(period)
+        return result if result is not None else holder.default_array()
+
+    def _run_stateful_formula(self, formula, population, period):
+        parameters_at = (
+            self.trace_parameters_at_instant
+            if self.trace
+            else self.tax_benefit_system.get_parameters_at_instant
+        )
+        if formula.__code__.co_argcount == 2:
+            return formula(population, period)
+        return formula(population, period, parameters_at)
+
+    def _record_formula_type(self, formula_type) -> None:
+        record_formula_type = getattr(self.tracer, "record_formula_type", None)
+        if record_formula_type is not None:
+            record_formula_type(formula_type)
+
     def _run_formula(self, variable, population, period):
         """Find the ``variable`` formula for the given ``period`` if it exists, and apply it to ``population``."""
         formula = variable.get_formula(period)
@@ -430,6 +533,28 @@ class Simulation:
             self.invalidate_spiral_variables(variable)
             message = f"Quasicircular definition detected on formula {variable}@{period} involving {self.tracer.stack}"
             raise errors.SpiralError(message, variable)
+
+    def _check_for_stateful_cycle(
+        self, variable: str, period, *, allow_past=True
+    ) -> None:
+        for frame in self.tracer.stack[:-1]:
+            if frame["name"] != variable:
+                continue
+            if frame["period"] == period:
+                msg = f"Circular definition detected on stateful formula {variable}@{period}"
+                raise errors.CycleError(msg)
+            if period > frame["period"]:
+                msg = (
+                    "Future recursion detected on stateful formula "
+                    f"{variable}@{period} from {frame['period']}"
+                )
+                raise errors.CycleError(msg)
+            if not allow_past:
+                msg = (
+                    "Circular definition detected on initial formula "
+                    f"{variable}@{period} without an existing state"
+                )
+                raise errors.CycleError(msg)
 
     def invalidate_cache_entry(self, variable: str, period) -> None:
         self.invalidated_caches.add(Cache(variable, period))

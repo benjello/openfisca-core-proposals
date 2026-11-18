@@ -33,6 +33,9 @@ class TraceNode:
     #: The end time of the node.
     end: t.Time = 0.0
 
+    #: The stateful formula kind, or None for regular formulas and cache hits.
+    formula_type: str | None = None
+
     def calculation_time(self, round_: bool = True) -> t.Time:
         """Calculate the time spent in the node.
 
