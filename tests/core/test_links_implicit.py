@@ -1,6 +1,7 @@
+from types import SimpleNamespace
+
 import numpy
 import pytest
-from types import SimpleNamespace
 
 from openfisca_core import entities, periods, taxbenefitsystems, variables
 from openfisca_core.links import Many2OneLink
