@@ -2,8 +2,8 @@ import os
 
 import numpy
 
-from openfisca_core.data_storage import OnDiskStorage
 from openfisca_core import periods
+from openfisca_core.data_storage import OnDiskStorage
 from openfisca_core.indexed_enums import Enum, EnumArray
 from openfisca_core.periods import DateUnit, instant
 from openfisca_core.periods import period as parse_period

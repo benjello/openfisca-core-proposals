@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import copy
-
 import numpy
 
 from openfisca_core import projectors
