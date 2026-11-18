@@ -33,6 +33,8 @@ class Holder:
         self.simulation = population.simulation
         self._eternal = self.variable.definition_period == periods.DateUnit.ETERNITY
         self._memory_storage = storage.InMemoryStorage(is_eternal=self._eternal)
+        self._input_periods = set()
+        self._is_setting_input = False
 
         # By default, do not activate on-disk storage, or variable dropping
         self._disk_storage = None
@@ -64,10 +66,20 @@ class Holder:
         # value set, cached or deleted through one simulation would silently
         # alter the other one.
         new_dict["_memory_storage"] = self._memory_storage.clone()
+        # Arrays are copied (not shared) so that in-place mutations on the
+        # clone's arrays can never reach the original simulation.
+        for period in self._memory_storage.get_known_periods():
+            array = self._memory_storage.get(period)
+            if array is not None:
+                new._memory_storage.put(array.copy(), period)
         if self._disk_storage is not None:
             new_dict["_disk_storage"] = self._disk_storage.clone(
                 os.path.join(new.simulation.data_storage_dir, self.variable.name),
             )
+
+        # ``_input_periods`` is mutable: copy it so that tracking the periods
+        # set as input on one simulation does not leak into its clone.
+        new_dict["_input_periods"] = set(self._input_periods)
 
         return new
 
@@ -91,6 +103,15 @@ class Holder:
         self._memory_storage.delete(period)
         if self._disk_storage:
             self._disk_storage.delete(period)
+        if period is None:
+            self._input_periods.clear()
+        else:
+            period = periods.period(period)
+            self._input_periods = {
+                known_period
+                for known_period in self._input_periods
+                if not period.contains(known_period)
+            }
 
     def get_array(self, period):
         """Get the value of the variable for the given period.
@@ -247,18 +268,27 @@ class Holder:
             return warnings.warn(warning_message, Warning, stacklevel=2)
         if self.variable.value_type in (float, int) and isinstance(array, str):
             array = commons.eval_expression(array)
-        if self.variable.set_input:
-            return self.variable.set_input(self, period, array)
-        return self._set(period, array)
+        self._is_setting_input = True
+        try:
+            if self.variable.set_input:
+                return self.variable.set_input(self, period, array)
+            return self._set(period, array)
+        finally:
+            self._is_setting_input = False
 
-    def _to_array(self, value):
+    def _to_array(self, value, period=None):
         if not isinstance(value, numpy.ndarray):
             value = numpy.asarray(value)
         if value.ndim == 0:
             # 0-dim arrays are casted to scalar when they interact with float. We don't want that.
             value = value.reshape(1)
-        if len(value) != self.population.count:
-            msg = f'Unable to set value "{value}" for variable "{self.variable.name}", as its length is {len(value)} while there are {self.population.count} {self.population.entity.plural} in the simulation.'
+        expected_count = (
+            self.population.get_count_for_period(period)
+            if period is not None and self.population._dynamic
+            else self.population.count
+        )
+        if len(value) != expected_count:
+            msg = f'Unable to set value "{value}" for variable "{self.variable.name}", as its length is {len(value)} while there are {expected_count} {self.population.entity.plural} in the simulation.'
             raise ValueError(
                 msg,
             )
@@ -275,7 +305,7 @@ class Holder:
         return value
 
     def _set(self, period, value) -> None:
-        value = self._to_array(value)
+        value = self._to_array(value, period)
         if not self._eternal:
             if period is None:
                 msg = (
@@ -318,6 +348,8 @@ class Holder:
             self._disk_storage.put(value, period)
         else:
             self._memory_storage.put(value, period)
+        if self._is_setting_input:
+            self._input_periods.add(periods.period(period))
 
     def put_in_cache(self, value, period) -> None:
         if self._do_not_store:
