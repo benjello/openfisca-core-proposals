@@ -12,8 +12,9 @@ def test_set_members_entity_id_updates_structure_and_invalidates_cached_values(
         count=4,
     ).household
     old_roles = population.members_role
-    population.members_position
-    population.ordered_members_map
+    # Prime the lazily-computed caches so we can assert they get invalidated.
+    _ = population.members_position
+    _ = population.ordered_members_map
 
     population.set_members_entity_id([0, 2, 0, 2])
 
