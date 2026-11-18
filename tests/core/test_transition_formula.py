@@ -10,7 +10,6 @@ from openfisca_core.taxbenefitsystems import TaxBenefitSystem
 from openfisca_core.tracers import SimpleTracer
 from openfisca_core.variables import Variable
 
-
 entity = Entity("person", "persons", "", "")
 
 
@@ -31,7 +30,7 @@ def test_transition_formula_requires_as_of():
         entity = entity
         definition_period = DateUnit.MONTH
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             return [], []
 
     with pytest.raises(ValueError, match="transition_formula without as_of"):
@@ -45,10 +44,10 @@ def test_transition_formula_is_mutually_exclusive_with_formula():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def formula(person, period):  # noqa: N805
+        def formula(person, period):
             return 0
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             return [], []
 
     with pytest.raises(ValueError, match="mutually exclusive"):
@@ -62,10 +61,10 @@ def test_transition_formula_dispatches_by_date():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             return [], []
 
-        def transition_formula_2025(person, period):  # noqa: N805
+        def transition_formula_2025(person, period):
             return [], []
 
     variable = State()
@@ -83,11 +82,11 @@ def test_initial_formula_runs_before_transitions():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             calls.append("initial")
             return numpy.array([10, 20, 30])
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             calls.append("transition")
             previous = person("State", period.last_month)
             return numpy.arange(3), previous + 1
@@ -112,7 +111,7 @@ def test_transition_formula_accepts_boolean_selector_and_scalar_value():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             return numpy.array([True, False, True]), 9
 
     simulation = make_simulation(State)
@@ -133,7 +132,7 @@ def test_explicit_input_prevents_transition_at_same_period():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             calls.append(period)
             return [0], [9]
 
@@ -156,7 +155,7 @@ def test_transition_formula_runs_once_per_period():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             calls.append(period)
             return [0], [9]
 
@@ -175,7 +174,7 @@ def test_transition_formula_requires_initial_state():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             return [0], [9]
 
     with pytest.raises(ValueError, match="no initial state"):
@@ -189,7 +188,7 @@ def test_transition_formula_validates_result_lengths():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             return [0, 1], [9]
 
     simulation = make_simulation(State)
@@ -206,7 +205,7 @@ def test_temporal_recursion_is_allowed_but_exact_cycle_is_rejected():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             previous = person("State", period.last_month)
             return numpy.arange(3), previous + 1
 
@@ -223,7 +222,7 @@ def test_temporal_recursion_is_allowed_but_exact_cycle_is_rejected():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             person("CyclicState", period)
             return [], []
 
@@ -240,7 +239,7 @@ def test_future_recursion_is_rejected():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             person("State", period.offset(1))
             return [], []
 
@@ -258,7 +257,7 @@ def test_initial_formula_cycle_is_rejected_and_clears_stack():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             return person("State", period)
 
     simulation = make_simulation(State)
@@ -275,7 +274,7 @@ def test_initial_formula_backward_recursion_without_base_is_rejected():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             return person("State", period.last_month)
 
     simulation = make_simulation(State)
@@ -292,7 +291,7 @@ def test_initial_formula_backward_recursion_with_only_future_base_is_rejected():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             return person("State", period.last_month)
 
     simulation = make_simulation(State)
@@ -310,7 +309,7 @@ def test_initial_formula_calculation_clears_final_stack():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             return [1, 2, 3]
 
     simulation = make_simulation(State)
@@ -329,7 +328,7 @@ def test_noop_transition_is_recorded_as_calculated_period():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             return [], []
 
     simulation = make_simulation(State)
@@ -346,7 +345,7 @@ def test_dependency_cycle_error_is_not_swallowed():
         entity = entity
         definition_period = DateUnit.MONTH
 
-        def formula(person, period):  # noqa: N805
+        def formula(person, period):
             return person("Dependency", period)
 
     class State(Variable):
@@ -355,7 +354,7 @@ def test_dependency_cycle_error_is_not_swallowed():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             person("Dependency", period)
             return [], []
 
@@ -375,7 +374,7 @@ def test_retroactive_input_recalculates_future_transitions():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             calls.append(period)
             previous = person("State", period.last_month)
             return numpy.arange(3), previous + 1
@@ -405,7 +404,7 @@ def test_future_dense_input_still_replaces_after_retroactive_invalidation():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             previous = person("State", period.last_month)
             return numpy.arange(3), previous + 1
 
@@ -432,7 +431,7 @@ def test_future_dense_input_survives_invalidated_calculated_base():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             return person.filled_array(0)
 
     simulation = make_simulation(State)
@@ -456,7 +455,7 @@ def test_deleting_historical_period_recalculates_future_transitions():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             calls.append(period)
             previous = person("State", period.last_month)
             return numpy.arange(3), previous + 1
@@ -486,7 +485,7 @@ def test_sparse_input_can_patch_calculated_base_at_same_period():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             return [1, 2, 3]
 
     simulation = make_simulation(State)
@@ -507,10 +506,10 @@ def test_trace_records_initial_and_transition_formula_types():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             return numpy.array([1, 2, 3])
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             return [], []
 
     simulation = make_simulation(State)
@@ -562,7 +561,7 @@ def test_stateful_formula_supports_tracer_without_formula_type_hook():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             return [1, 2, 3]
 
     simulation = make_simulation(State)

@@ -4,9 +4,9 @@ import numpy
 
 from openfisca_core.data_storage import OnDiskStorage
 from openfisca_core.indexed_enums import Enum, EnumArray
-from openfisca_core.periods import DateUnit, instant, period as parse_period
+from openfisca_core.periods import DateUnit, instant
+from openfisca_core.periods import period as parse_period
 from openfisca_core.simulations import Simulation
-
 
 AS_OF_STATE_FILE = "__as_of_state.npz"
 

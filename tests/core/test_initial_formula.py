@@ -5,7 +5,6 @@ from openfisca_core.entities import Entity
 from openfisca_core.periods import DateUnit
 from openfisca_core.variables import Variable
 
-
 entity = Entity("person", "persons", "", "")
 
 
@@ -15,7 +14,7 @@ def test_initial_formula_requires_as_of():
         entity = entity
         definition_period = DateUnit.MONTH
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             return numpy.zeros(1)
 
     with pytest.raises(ValueError, match="initial_formula without as_of"):
@@ -29,10 +28,10 @@ def test_initial_formula_is_mutually_exclusive_with_formula():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def formula(person, period):  # noqa: N805
+        def formula(person, period):
             return 0
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             return 1
 
     with pytest.raises(ValueError, match="formula and initial_formula"):
@@ -46,13 +45,13 @@ def test_initial_formula_dispatches_in_date_order():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             return 1
 
-        def initial_formula_2024_06(person, period):  # noqa: N805
+        def initial_formula_2024_06(person, period):
             return 2
 
-        def initial_formula_2025(person, period):  # noqa: N805
+        def initial_formula_2025(person, period):
             return 3
 
     variable = StatefulVariable()
@@ -74,7 +73,7 @@ def test_initial_formula_rejects_invalid_date_name():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula_2024_13(person, period):  # noqa: N805
+        def initial_formula_2024_13(person, period):
             return 1
 
     with pytest.raises(ValueError, match="Unrecognized initial_formula"):
@@ -89,7 +88,7 @@ def test_initial_formula_respects_variable_end():
         as_of = True
         end = "2024-12-31"
 
-        def initial_formula_2025(person, period):  # noqa: N805
+        def initial_formula_2025(person, period):
             return 1
 
     with pytest.raises(ValueError, match="ends on"):
@@ -103,10 +102,10 @@ def test_initial_formula_inherits_earlier_baseline_formulas():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             return 1
 
-        def initial_formula_2024(person, period):  # noqa: N805
+        def initial_formula_2024(person, period):
             return 2
 
     class ReformVariable(Variable):
@@ -115,7 +114,7 @@ def test_initial_formula_inherits_earlier_baseline_formulas():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula_2025(person, period):  # noqa: N805
+        def initial_formula_2025(person, period):
             return 3
 
     variable = ReformVariable(baseline_variable=BaselineVariable())
@@ -131,7 +130,7 @@ def test_has_initial_formula():
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             return 1
 
     assert StatefulVariable().has_initial_formula

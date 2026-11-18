@@ -169,10 +169,10 @@ def test_dump_and_restore_preserves_as_of_provenance(
         definition_period = DateUnit.MONTH
         as_of = True
 
-        def initial_formula(person, period):  # noqa: N805
+        def initial_formula(person, period):
             return person.filled_array(0)
 
-        def transition_formula(person, period):  # noqa: N805
+        def transition_formula(person, period):
             previous = person("RestoredState", period.last_month)
             return numpy.arange(person.count), previous + 1
 
