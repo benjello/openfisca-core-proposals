@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import typing
 
 import numpy
@@ -9,13 +8,6 @@ from openfisca_core import entities, indexed_enums, periods, projectors
 
 from . import types as t
 from .population import Population
-
-
-def _copy_array(value):
-    """Copy an array-like structural attribute, leaving scalars and None untouched."""
-    if isinstance(value, (numpy.ndarray, list)):
-        return copy.copy(value)
-    return value
 
 
 class GroupPopulation(Population):

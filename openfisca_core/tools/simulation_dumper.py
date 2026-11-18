@@ -2,9 +2,9 @@ import os
 
 import numpy
 
+from openfisca_core import periods
 from openfisca_core.data_storage import OnDiskStorage
 from openfisca_core.indexed_enums import Enum
-from openfisca_core import periods
 from openfisca_core.periods import DateUnit
 from openfisca_core.simulations import Simulation
 

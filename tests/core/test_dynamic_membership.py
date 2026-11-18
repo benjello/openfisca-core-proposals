@@ -175,8 +175,9 @@ def test_temporal_projector_supports_historical_custom_parent() -> None:
 def test_dynamic_membership_is_preserved_and_isolated_by_clone() -> None:
     simulation = build_simulation()
     simulation.household.set_members_for_period("2024-02", [0, 1, 0, 1])
-    simulation.household.members_position
-    simulation.household.ordered_members_map
+    # Prime the lazily-computed caches so we can assert they get invalidated.
+    _ = simulation.household.members_position
+    _ = simulation.household.ordered_members_map
     simulation.household._get_members_position("2024-03")
     simulation.household._get_ordered_members_map("2024-03")
 

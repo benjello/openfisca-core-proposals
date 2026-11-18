@@ -731,9 +731,10 @@ class CorePopulation:
             for known_period in list(holder.get_known_periods()):
                 if known_period.stop < snapshot_period.start:
                     continue
-                if next_start is None or known_period.start < next_start:
-                    if known_period not in holder._input_periods:
-                        holder.delete_arrays(known_period)
+                if (
+                    next_start is None or known_period.start < next_start
+                ) and known_period not in holder._input_periods:
+                    holder.delete_arrays(known_period)
 
     def _invalidate_lifecycle_caches(self, snapshot_period) -> None:
         populations = (
