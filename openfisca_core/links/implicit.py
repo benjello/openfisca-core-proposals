@@ -47,7 +47,7 @@ class _ProjectedCallable:
         return attribute
 
 
-class ImplicitMany2OneLink(Many2OneLink):
+class ImplicitMany2OneLink(Many2OneLink, projectors.Projector):
     """A person-to-group link backed by ``members_entity_id``."""
 
     def __init__(self, group_entity_key: str) -> None:
@@ -91,7 +91,7 @@ class ImplicitMany2OneLink(Many2OneLink):
                 f"entity values, got {result.size}"
             )
             raise ValueError(message)
-        return self._target_population.project(result)
+        return self._target_population.project(result, period=period)
 
     def __getattr__(self, name: str):
         if name.startswith("_"):

@@ -97,6 +97,12 @@ class Holder:
         # value set, cached or deleted through one simulation would silently
         # alter the other one.
         new_dict["_memory_storage"] = self._memory_storage.clone()
+        # Arrays are copied (not shared) so that in-place mutations on the
+        # clone's arrays can never reach the original simulation.
+        for period in self._memory_storage.get_known_periods():
+            array = self._memory_storage.get(period)
+            if array is not None:
+                new._memory_storage.put(array.copy(), period)
         if self._disk_storage is not None:
             new_dict["_disk_storage"] = self._disk_storage.clone(
                 os.path.join(new.simulation.data_storage_dir, self.variable.name),
